@@ -2,12 +2,24 @@ const { Queue, QueueEvents } = require('bullmq');
 const { config } = require('./config');
 const logger = require('./logger');
 
-const connection = {
-  host: config.redis.host,
-  port: config.redis.port,
-  password: config.redis.password,
-  maxRetriesPerRequest: null,
-};
+const connection = config.redis.url
+  ? {
+      url: config.redis.url,
+      connectTimeout: config.redis.connectTimeout,
+      lazyConnect: config.redis.lazyConnect,
+      retryDelayOnFailover: config.redis.retryDelayOnFailover,
+      maxRetriesPerRequest: config.redis.maxRetriesPerRequest,
+      enableOfflineQueue: false,
+    }
+  : {
+      host: config.redis.host,
+      port: config.redis.port,
+      password: config.redis.password,
+      maxRetriesPerRequest: config.redis.maxRetriesPerRequest,
+      connectTimeout: config.redis.connectTimeout,
+      lazyConnect: config.redis.lazyConnect,
+      enableOfflineQueue: false,
+    };
 
 const queueName = 'content-generation';
 

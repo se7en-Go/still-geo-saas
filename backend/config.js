@@ -174,9 +174,14 @@ const config = {
     port: coerceNumber(process.env.DB_PORT, 5432),
   },
   redis: {
+    url: process.env.REDIS_URL,
     host: process.env.REDIS_HOST || DEFAULTS.redis.host,
     port: coerceNumber(process.env.REDIS_PORT, DEFAULTS.redis.port),
     password: process.env.REDIS_PASSWORD,
+    connectTimeout: 30000,
+    lazyConnect: true,
+    retryDelayOnFailover: 100,
+    maxRetriesPerRequest: 3,
   },
   ai: {
     provider,
