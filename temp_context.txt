@@ -1,0 +1,41 @@
+
+
+    }
+
+
+    const combined =
+
+
+      Array.isArray(payload.keywordSeeds) && payload.keywordSeeds.length
+
+
+        ? payload.keywordSeeds.join(' / ')
+
+
+        : payload.baseKeyword;
+
+
+    if (combined) {
+
+
+      form.setFieldsValue({ keyword: combined });
+
+
+      message.success('已复制关键词，可直接到生成页提交。');
+
+
+    }
+
+
+    if (payload.keywordSchema) {
+
+
+      setSchemaEntities((prev) => ({
+
+
+        ...prev,
+
+
+        keyword: {
+
+

@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Railway 配置指南</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
+        .env-var { background: #f5f5f5; padding: 10px; border-radius: 5px; margin: 10px 0; font-family: monospace; }
+        .step { margin: 20px 0; padding: 15px; border-left: 4px solid #1890ff; }
+        .copy-btn { background: #1890ff; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; }
+        .copy-btn:hover { background: #40a9ff; }
+    </style>
+</head>
+<body>
+    <h1>🚀 GEO 优化平台 - Railway 配置指南</h1>
+    
+    <div class="step">
+        <h2>第1步：访问 Railway 项目</h2>
+        <p>点击下面的链接直接访问你的项目配置页面：</p>
+        <a href="https://railway.com/project/57d83394-2fd7-451f-b6e8-101598e3be89" target="_blank">
+            <button style="background: #52c41a; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer;">
+                🌐 打开 Railway 项目
+            </button>
+        </a>
+    </div>
+
+    <div class="step">
+        <h2>第2步：选择服务并配置环境变量</h2>
+        <p>1. 选择 <strong>geo-backend</strong> 服务</p>
+        <p>2. 点击 <strong>"Variables"</strong> 选项卡</p>
+        <p>3. 点击 <strong>"New Variable"</strong> 添加以下环境变量：</p>
+    </div>
+
+    <div class="step">
+        <h2>第3步：复制粘贴环境变量</h2>
+        
+        <h3>📋 核心配置</h3>
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            NODE_ENV=production
+        </div>
+        
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            PORT=65535
+        </div>
+        
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            ALLOW_USER_REGISTRATION=false
+        </div>
+        
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            JWT_EXPIRES_IN=7d
+        </div>
+
+        <h3>🔑 JWT 配置</h3>
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            JWT_SECRET=a640f2b3768b6eff434c780a3d4bda1ea0574fefee0d39420092a04316b822f9be2d97b435f1ef61789c98cd48f3248b56e92ce186e179bca85dffca9269dd6d
+        </div>
+
+        <h3>🗄️ 数据库配置（Railway 已有，确认即可）</h3>
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            DATABASE_URL=postgresql://neondb_owner:npg_kMNl9QOit6GF@ep-floral-lake-a1uuf65r-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+        </div>
+
+        <h3>🔴 Redis 配置（Upstash）</h3>
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            REDIS_URL=redis://default:ATN5AAIncDJlOWY4OGM4ODE4YTQ0MDc4Yjc2Nzc4Yjk2OWRhNTNiYXAyMTMxNzc@smooth-sawfish-13177.upstash.io:6379
+        </div>
+
+        <h3>🤖 AI 服务配置（Gemini 2.5 Pro）</h3>
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            AI_API_BASE_URL=https://smmspvcbawuk.ap-northeast-1.clawcloudrun.com/v1beta
+        </div>
+        
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            AI_API_KEY=sk-seven
+        </div>
+        
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            CHAT_COMPLETION_MODEL=gemini-2.5-pro
+        </div>
+        
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            AI_CHAT_COMPLETION_PATH=models/gemini-2.5-pro:generateContent
+        </div>
+        
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            AI_PROVIDER=gemini
+        </div>
+        
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            AI_USE_RESPONSE_FORMAT=false
+        </div>
+        
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            AI_REQUEST_TIMEOUT_MS=120000
+        </div>
+
+        <h3>🔍 嵌入服务配置（SiliconFlow）</h3>
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            EMBEDDING_API_BASE_URL=https://api.siliconflow.cn
+        </div>
+        
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            EMBEDDING_API_KEY=sk-liqwafvqmhxntyxerblzxrkudctwqnejaprxybyqlvtldyqo
+        </div>
+        
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            EMBEDDING_MODEL=BAAI/bge-m3
+        </div>
+
+        <h3>👁️ OCR 服务配置（DeepSeek）</h3>
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            OCR_ENABLED=true
+        </div>
+        
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            OCR_PROVIDER=deepseek
+        </div>
+        
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            OCR_BASE_URL=https://api.siliconflow.cn
+        </div>
+        
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            OCR_API_KEY=sk-liqwafvqmhxntyxerblzxrkudctwqnejaprxybyqlvtldyqo
+        </div>
+        
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            OCR_MODEL=deepseek-ai/DeepSeek-OCR
+        </div>
+        
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            OCR_ENDPOINT=/v1/chat/completions
+        </div>
+        
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            OCR_TIMEOUT_MS=90000
+        </div>
+
+        <h3>⚙️ 其他配置</h3>
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            CONTENT_QUEUE_TIMEOUT_MS=120000
+        </div>
+        
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            KEYWORD_CACHE_TTL_MS=60000
+        </div>
+        
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            KEYWORD_CACHE_MAX_ENTRIES=200
+        </div>
+        
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            UPLOAD_DIR=/app/uploads
+        </div>
+        
+        <div class="env-var">
+            <button class="copy-btn" onclick="copyToClipboard(this)">📋 复制</button>
+            MAX_FILE_SIZE=10485760
+        </div>
+    </div>
+
+    <div class="step">
+        <h2>第4步：重新部署</h2>
+        <p>配置完成后，点击 <strong>"Redeploy"</strong> 按钮重新部署你的应用。</p>
+    </div>
+
+    <div class="step">
+        <h2>第5步：测试部署</h2>
+        <p>部署完成后，测试以下链接：</p>
+        <ul>
+            <li><strong>后端健康检查</strong>: <a href="https://geo-backend-production-2215.up.railway.app/api/health" target="_blank">https://geo-backend-production-2215.up.railway.app/api/health</a></li>
+            <li><strong>前端应用</strong>: <a href="https://geo-optimization-frontend-i1cc44cnr-se7en7788s-projects.vercel.app" target="_blank">https://geo-optimization-frontend-i1cc44cnr-se7en7788s-projects.vercel.app</a></li>
+        </ul>
+    </div>
+
+    <script>
+        function copyToClipboard(button) {
+            const text = button.nextElementSibling || button.parentElement.textContent.replace(/📋 复制/, '').trim();
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+            
+            const originalText = button.textContent;
+            button.textContent = '✅ 已复制';
+            setTimeout(() => {
+                button.textContent = originalText;
+            }, 2000);
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+services:
+  # Node.js 后端服务
+  - type: web
+    name: geo-backend
+    env: node
+    plan: free
+    buildCommand: "npm install"
+    startCommand: "npm start"
+    healthCheckPath: "/api/health"
+    repo: https://github.com/your-username/geo-optimization.git  # 替换为您的实际仓库
+    rootDir: backend
+    nodeVersion: "18"
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      # 数据库配置 - 将在Render控制台设置
+      - key: DATABASE_URL
+        sync: false
+      # Redis配置 - 将在Render控制台设置
+      - key: REDIS_URL
+        sync: false
+      # JWT密钥 - 将在Render控制台设置
+      - key: JWT_SECRET
+        sync: false
+      # AI服务配置 - 将在Render控制台设置
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+
+# PostgreSQL 数据库
+databases:
+  - name: geo-db
+    plan: free
+    databaseName: geodb
+    user: geo_user
+
+# Redis (如果Render支持或者使用Upstash)
+# 注意: Render的免费计划不包含Redis，建议使用Upstash

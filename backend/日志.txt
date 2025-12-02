@@ -1,0 +1,51 @@
+  后端方案
+
+  - 数据层
+      - 在 backend/db_setup.js 中为 generation_rules 添加 schema_config JSONB（含 enabledTypes[]、schemaTemplates、
+        customFields 等），为 generated_content 添加 schema_payload JSONB 与 schema_types TEXT[]，以便落库与回滚。
+      - 在 keywords、keyword_variations、documents 增加 schema_metadata JSONB，或建专门 entity_schema_metadata 表
+        （entity_type,entity_id,payload），默认记录品牌、SKU、FAQ QA 列表等。
+  - API 扩展
+      - backend/routes/rules.js：POST/PUT 支持 schemaConfig 字段校验（Joi schema 更新于 backend/validation.js），并返回
+        模板配置。
+      - backend/routes/keywords.js、backend/routes/documents.js：增补 schemaMetadata 读写接口及批量更新端点，允许实体维
+        护品牌/FAQ/SKU。
+      - backend/routes/content.js：POST /api/content/generate 将 schemaConfig 和实体 Schema 数据传给 Queue，GET /api/
+        content / GET /api/content/jobs/:id 回传 schemaPayload。
+  - Worker / 队列
+      - backend/worker.js：根据 schema_config 拼接 “Schema Block” Prompt，例如：
+
+        ## Schema Block
+        You must output JSON for each schema in schema_config.enabledTypes.
+        Follow exact keys from schema_config.schemaTemplates.*.
+      - 解析模型输出：若模型直接返回 JSON，验证后写入 job.updateProgress({ schemaTypes, schemaPayload }) 并落库；若返回
+        Markdown 表格，则在 Worker 里转为对应 LD+JSON。
+      - AppError 处理：Schema 解析失败时记录 fallback 原因并写入 schema_payload 的 fallback 字段，保持 agents.md:20 中的
+        统一错误策略。
+  - 导出/调试
+      - 添加 GET /api/content/:id/schema 方便前端一键复制。
+      - Jest + pg-mem 测试：新增 schema_config 校验、Worker 解析与 generated_content 回读用例。
+
+  前端方案
+
+  - 规则配置 UI (frontend/src/pages/RuleEditor/*.tsx)
+      - 在规则表单中加入 “Schema 模块” 折叠面板，字段包括：启用开关、Schema 类型多选（Product/FAQ/Breadcrumb/HowTo…）、
+        模板编辑器（JSON schema 或表单字段）、自定义字段映射（品牌、价格、FAQ QA）。
+      - 利用已有 useAsyncAction / useApi 统一调用新 API，保持 agents.md:14 所述组件化策略。
+  - 内容生成页 (frontend/src/pages/ContentGenerationPage.tsx)
+      - 接收 schemaPayload 并展示：
+          - 预览卡片（Product/FAQ tab），支持 JSON/Pretty 视图；
+          - “插入页面”按钮会把 schemaPayload 渲染为 <script type="application/ld+json"> 注入预生成 HTML；
+          - “复制 LD+JSON”/导出 JSON。
+      - Markdown → HTML 渲染流程末尾增加 Schema 注入钩子，在构建最终落地页时自动串接脚本片段。
+  - 关键词/知识库页
+      - 在关键词详情与知识库文档侧栏增加 “Schema 元数据” 子表单（品牌、SKU、FAQ 数组等），写入 schemaMetadata，并提供从
+        模板快速填充功能。
+  - Storybook / 体验
+      - 为 Schema 表单与输出预览新增 Storybook 条目，符合 agents.md:14 的 UI 文档要求。
+      - 复用 LoadingContext 提示 Schema 生成进度。
+
+  落地步骤
+
+  - 依次完成 DB Migration → Joi 校验 → 路由/Worker 改造 → 前端 UI/渲染，并以集成测试验证。
+  - 若需要进一步指导（例如具体 SQL 或前端组件代码），可在具备写权限的环境中继续执行。

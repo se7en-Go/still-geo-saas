@@ -1,0 +1,38 @@
+{
+  "customModes": [
+    {
+      "name": "spec",
+      "description": "Specification mode - Requirements analysis",
+      "phase": "Specification"
+    },
+    {
+      "name": "architect",
+      "description": "Architecture mode - System design",
+      "phase": "Architecture"
+    },
+    {
+      "name": "tdd",
+      "description": "Test-driven development mode",
+      "phase": "Test-Driven Development"
+    },
+    {
+      "name": "integration",
+      "description": "Integration mode - Component connection",
+      "phase": "Integration"
+    },
+    {
+      "name": "refactor",
+      "description": "Refactoring mode - Code improvement",
+      "phase": "Refinement"
+    }
+  ],
+  "version": "2.7.41",
+  "methodology": "SPARC",
+  "phases": [
+    "Specification",
+    "Pseudocode",
+    "Architecture",
+    "Refinement",
+    "Completion"
+  ]
+}
