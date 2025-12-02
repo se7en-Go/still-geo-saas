@@ -64,6 +64,7 @@ function validateEnvironment() {
   'AI_CHAT_COMPLETION_PATH',
   'AI_USE_RESPONSE_FORMAT',
   'AI_PROVIDER',
+  'REDIS_URL',
   'REDIS_HOST',
   'REDIS_PORT',
   'KEYWORD_CACHE_TTL_MS',
@@ -119,8 +120,8 @@ function validateEnvironment() {
     warnings.push('AI API credentials are set but AI_API_BASE_URL is missing. AI requests will not be sent.');
   }
 
-  if (!process.env.REDIS_HOST) {
-    warnings.push('REDIS_HOST is not defined; falling back to localhost.');
+  if (!process.env.REDIS_URL && !process.env.REDIS_HOST) {
+    warnings.push('Neither REDIS_URL nor REDIS_HOST is defined; falling back to localhost.');
   }
 
   if (asBoolean(process.env.OCR_ENABLED, false)) {

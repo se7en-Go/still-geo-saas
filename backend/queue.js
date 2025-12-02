@@ -18,6 +18,7 @@ if (!useFallback) {
         enableOfflineQueue: false,
         family: 4, // 强制使用IPv4
         keepAlive: 30000,
+        tls: {}, // Enable TLS for Upstash Redis Cloud
       }
     : {
         host: config.redis.host,

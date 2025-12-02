@@ -7,12 +7,24 @@ const { config } = require('./config');
 const db = require('./db');
 const logger = require('./logger');
 
-const connection = {
-  host: config.redis.host,
-  port: config.redis.port,
-  password: config.redis.password,
-  maxRetriesPerRequest: null,
-};
+const connection = config.redis.url
+  ? {
+      url: config.redis.url,
+      connectTimeout: config.redis.connectTimeout,
+      lazyConnect: config.redis.lazyConnect,
+      retryDelayOnFailover: config.redis.retryDelayOnFailover,
+      maxRetriesPerRequest: null,
+      enableOfflineQueue: false,
+      family: 4, // 强制使用IPv4
+      keepAlive: 30000,
+      tls: {}, // Enable TLS for Upstash Redis Cloud
+    }
+  : {
+      host: config.redis.host,
+      port: config.redis.port,
+      password: config.redis.password,
+      maxRetriesPerRequest: null,
+    };
 
 const MAX_KNOWLEDGE_BASE_CHAR_LENGTH = 8000;
 const MAX_KNOWLEDGE_BASE_SNIPPETS = 5;
