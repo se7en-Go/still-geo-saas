@@ -20,7 +20,22 @@ function createApp() {
   created.forEach((dir) => logger.info(`Ensured directory ${dir}`));
 
   const app = express();
-  app.use(cors());
+
+  // CORS配置 - 更安全的配置
+  app.use(cors({
+    origin: process.env.NODE_ENV === 'production'
+      ? [
+          'https://geo-optimization-frontend-axe0myyxb-se7en7788s-projects.vercel.app',  // Vercel生产域名
+          'https://geo-backend-vp34.onrender.com',  // Render后端域名
+          /\.vercel\.app$/,  // 支持所有Vercel子域名
+        ]
+      : ['http://localhost:3000', 'http://127.0.0.1:3000'],  // 开发环境域名
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'x-auth-token', 'Authorization'],
+    exposedHeaders: ['x-auth-token'],
+  }));
+
   app.use(express.json());
   app.use('/uploads', express.static(path.resolve(uploadDir)));
 
