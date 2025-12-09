@@ -2,90 +2,143 @@ const { Queue, QueueEvents } = require('bullmq');
 const { config } = require('./config');
 const logger = require('./logger');
 
-// 在生产环境中如果Redis不可用，使用内存队列作为fallback
-const useFallback = process.env.NODE_ENV === 'production' && !process.env.REDIS_AVAILABLE;
-
 let contentQueue, events;
 
-if (!useFallback) {
-  const connection = config.redis.url
-    ? {
-        url: config.redis.url,
-        connectTimeout: config.redis.connectTimeout,
-        lazyConnect: config.redis.lazyConnect,
-        retryDelayOnFailover: config.redis.retryDelayOnFailover,
-        maxRetriesPerRequest: 0, // 设置为0来快速失败
-        enableOfflineQueue: false,
-        family: 4, // 强制使用IPv4
-        keepAlive: 30000,
-        tls: {}, // Enable TLS for Upstash Redis Cloud
-      }
-    : {
-        host: config.redis.host,
-        port: config.redis.port,
-        password: config.redis.password,
-        maxRetriesPerRequest: 0,
-        connectTimeout: config.redis.connectTimeout,
-        lazyConnect: config.redis.lazyConnect,
-        enableOfflineQueue: false,
-        family: 4,
-        keepAlive: 30000,
-      };
+// 创建优化的Redis连接配置
+function createRedisConnection() {
+  if (config.redis.url) {
+    return {
+      url: config.redis.url,
+      connectTimeout: 10000, // 10秒连接超时
+      lazyConnect: true,
+      retryDelayOnFailover: 2000,
+      maxRetriesPerRequest: 3,
+      enableOfflineQueue: false,
+      family: 4, // 强制使用IPv4
+      keepAlive: 30000,
+      tls: {}, // Upstash Redis Cloud需要TLS
+    };
+  }
 
-try {
-    const queueName = 'content-generation';
+  return {
+    host: config.redis.host || 'localhost',
+    port: config.redis.port || 6379,
+    password: config.redis.password,
+    connectTimeout: 10000,
+    lazyConnect: true,
+    maxRetriesPerRequest: 3,
+    enableOfflineQueue: false,
+    family: 4,
+    keepAlive: 30000,
+  };
+}
 
+// 初始化队列系统
+async function initializeQueue() {
+  const connection = createRedisConnection();
+  const queueName = 'content-generation';
+
+  try {
+    // 首先创建队列事件监听器
     events = new QueueEvents(queueName, { connection });
+
+    // 创建队列
     contentQueue = new Queue(queueName, {
       connection,
       defaultJobOptions: {
-        attempts: config.queue.attempts,
+        attempts: 3,
         backoff: {
           type: 'exponential',
-          delay: config.queue.backoffMs,
+          delay: 2000,
         },
-        removeOnComplete: false,
-        removeOnFail: false,
-        timeout: config.queue.timeoutMs,
+        removeOnComplete: 10, // 保留最近10个完成的任务
+        removeOnFail: 5,      // 保留最近5个失败的任务
+        timeout: 120000,      // 2分钟超时
       },
     });
 
+    // 设置事件监听器
     events.on('failed', ({ jobId, failedReason, attemptsMade }) => {
       logger.error('Content job failed', { jobId, failedReason, attemptsMade });
     });
+
     events.on('stalled', ({ jobId }) => {
       logger.warn('Content job stalled', { jobId });
     });
+
     events.on('completed', ({ jobId }) => {
       logger.info('Content job completed', { jobId });
-    });
-
-    contentQueue.on('error', (err) => {
-      logger.error('Content queue encountered an error', { error: err.message });
     });
 
     events.on('error', (err) => {
       logger.error('Queue events stream error', { error: err.message });
     });
 
+    contentQueue.on('error', (err) => {
+      logger.error('Content queue encountered an error', { error: err.message });
+    });
+
+    logger.info('Content queue initialized successfully', { queueName });
+
+    return true;
   } catch (error) {
-    logger.warn('Redis queue initialization failed, using memory fallback', { error: error.message });
-    // Fallback to memory queue
+    logger.error('Failed to initialize Redis queue', { error: error.message });
+    return false;
   }
 }
 
-// 如果Redis不可用或fallback被触发，使用内存队列
-if (!contentQueue) {
-  logger.info('Using in-memory queue for content generation (Redis not available)');
+// 创建内存队列作为fallback
+function createMemoryQueue() {
+  logger.warn('Using memory fallback queue for content generation');
+
+  const jobs = new Map();
+  let jobIdCounter = 1;
 
   contentQueue = {
     add: async (name, data, options = {}) => {
-      logger.info('Memory queue: job added (not processed)', { name, data: data.title || 'unknown' });
-      return { id: Date.now().toString() };
+      const jobId = (jobIdCounter++).toString();
+      jobs.set(jobId, { ...data, status: 'queued', createdAt: new Date() });
+      logger.info('Memory queue: job added', { jobId, name, title: data.title || 'unknown' });
+
+      // 模拟异步处理
+      setTimeout(() => {
+        const job = jobs.get(jobId);
+        if (job) {
+          job.status = 'completed';
+          job.completedAt = new Date();
+          jobs.set(jobId, job);
+          logger.info('Memory queue: job completed', { jobId });
+        }
+      }, 1000);
+
+      return { id: jobId };
     },
+
+    getJob: async (jobId) => {
+      return jobs.get(jobId);
+    },
+
+    getJobs: async (types) => {
+      const allJobs = Array.from(jobs.entries()).map(([id, job]) => ({ id, ...job }));
+      return allJobs;
+    },
+
+    getJobCounts: async () => {
+      const counts = { active: 0, completed: 0, failed: 0, waiting: 0 };
+      jobs.forEach(job => {
+        if (job.status === 'queued') counts.waiting++;
+        else if (job.status === 'active') counts.active++;
+        else if (job.status === 'completed') counts.completed++;
+        else if (job.status === 'failed') counts.failed++;
+      });
+      return counts;
+    },
+
     getWorkers: () => Promise.resolve([]),
-    process: () => {},
-    close: async () => {}
+
+    close: async () => {
+      jobs.clear();
+    }
   };
 
   events = {
@@ -93,5 +146,14 @@ if (!contentQueue) {
     close: async () => {}
   };
 }
+
+// 初始化队列系统
+(async () => {
+  const redisInitialized = await initializeQueue();
+
+  if (!redisInitialized || !contentQueue) {
+    createMemoryQueue();
+  }
+})();
 
 module.exports = { contentQueue, queueEvents: events };
