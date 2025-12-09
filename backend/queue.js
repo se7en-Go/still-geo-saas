@@ -12,7 +12,7 @@ function createRedisConnection() {
       connectTimeout: 10000, // 10秒连接超时
       lazyConnect: true,
       retryDelayOnFailover: 2000,
-      maxRetriesPerRequest: 3,
+      maxRetriesPerRequest: null, // BullMQ要求必须为null
       enableOfflineQueue: false,
       family: 4, // 强制使用IPv4
       keepAlive: 30000,
@@ -26,7 +26,7 @@ function createRedisConnection() {
     password: config.redis.password,
     connectTimeout: 10000,
     lazyConnect: true,
-    maxRetriesPerRequest: 3,
+    maxRetriesPerRequest: null, // BullMQ要求必须为null
     enableOfflineQueue: false,
     family: 4,
     keepAlive: 30000,

@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { contentQueue } = require('./queue');
+const { contentQueue } = require('./queue-fixed');
 const logger = require('./logger');
 
 async function testContentGeneration() {

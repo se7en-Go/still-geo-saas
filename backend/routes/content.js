@@ -2,7 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { auth } = require('../middleware/auth');
 const { validate, contentGenerationSchemas, contentScheduleSchemas } = require('../validation');
-const { contentQueue } = require('../queue');
+const { contentQueue } = require('../queue-fixed');
 const AppError = require('../utils/appError');
 
 const router = express.Router();
