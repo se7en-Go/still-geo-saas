@@ -71,36 +71,7 @@ function createAIClient() {
 
 const aiClient = createAIClient();
 
-// 修复：增强的AI响应验证和调试函数
-function validateAndDebugAIResponse(response, jobId) {
-  console.log(`[Job ${jobId}] AI Response Debug Info:`, {
-    status: response.status,
-    hasData: !!response.data,
-    dataType: typeof response.data,
-    dataKeys: response.data ? Object.keys(response.data) : null,
-  });
-
-  if (!response.data) {
-    throw new Error('Empty response data from AI service');
-  }
-
-  const hasCandidates = Array.isArray(response.data.candidates);
-  const hasContent = response.data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-  console.log(`[Job ${jobId}] Gemini Structure Analysis:`, {
-    hasCandidates,
-    candidateCount: response.data.candidates?.length || 0,
-    hasContent,
-    contentLength: hasContent ? response.data.candidates[0].content.parts[0].text.length : 0,
-  });
-
-  if (hasCandidates && !hasContent) {
-    throw new Error('Gemini response missing expected content structure');
-  }
-
-  return response.data;
-}
-
+// 修复：改进路径解析函数
 function resolveChatPath(pathFragment, provider) {
   if (!pathFragment) {
     return provider === 'gemini' ? '/models/gemini-2.5-flash:generateContent' : '/chat/completions';
@@ -675,7 +646,7 @@ const composeContentPrompt = ({
 
     rankingText = `
 **榜单要求**
-- 以“${ranking.title || '推荐榜单'}”的语气呈现，突出排名信息。
+- 以"${ranking.title || '推荐榜单'}"的语气呈现，突出排名信息。
 - 第 ${primaryIndex} 位必须为核心推荐：${primaryItem?.name || '主推项目'}，需给出至少 3 个关键优势，并对比其他产品指出差异。
 - 对其余项目，要客观说明适用人群、核心亮点及潜在局限，可与主推项目形成对照。
 - 共列出 ${sortedItems.length} 个项目，并按以下顺序输出，给出亮点/对比说明：
@@ -684,7 +655,7 @@ ${rankingList}
   } else if (ranking?.enabled && ranking.auto_generate) {
     rankingText = `
 **榜单要求**
-- 以“${ranking.title || '推荐榜单'}”的语气呈现，输出至少 4 个推荐条目。
+- 以"${ranking.title || '推荐榜单'}"的语气呈现，输出至少 4 个推荐条目。
 - 第 ${ranking.primary_position || 1} 位必须为核心推荐：${rule.source_settings?.brand_name || '主推品牌'} 的产品，给出 ≥3 个优势并和竞品对比。
 - 其余条目由你补充行业主流竞品，说明亮点、适用人群与潜在不足，保持客观准确。
 - 请标注来源或提醒读者这是参考信息，如缺乏可靠数据需说明。`;
@@ -822,7 +793,7 @@ async function getDocumentChunkStats(documentId, userId) {
   return {
     chunkCount: Number(row.chunk_count || 0),
     embeddingCount: Number(row.embedding_count || 0),
-    totalLength: Number(row.total_length || 0),
+    totalLength: Number(row.totalLength || 0),
   };
 }
 
@@ -845,7 +816,7 @@ async function getAggregatedChunkStats(documentIds, userId) {
   return {
     chunkCount: Number(row.chunk_count || 0),
     embeddingCount: Number(row.embedding_count || 0),
-    totalLength: Number(row.total_length || 0),
+    totalLength: Number(row.totalLength || 0),
   };
 }
 
@@ -1376,6 +1347,36 @@ function ensureStructuredContent(rawContent, keyword, rule, knowledgeBaseContent
   return buildFallbackContent(keyword, rule, knowledgeBaseContent, selectedImages);
 }
 
+// 修复：增强的AI响应验证和调试函数
+function validateAndDebugAIResponse(response, jobId) {
+  console.log(`[Job ${jobId}] AI Response Debug Info:`, {
+    status: response.status,
+    hasData: !!response.data,
+    dataType: typeof response.data,
+    dataKeys: response.data ? Object.keys(response.data) : null,
+  });
+
+  if (!response.data) {
+    throw new Error('Empty response data from AI service');
+  }
+
+  const hasCandidates = Array.isArray(response.data.candidates);
+  const hasContent = response.data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+  console.log(`[Job ${jobId}] Gemini Structure Analysis:`, {
+    hasCandidates,
+    candidateCount: response.data.candidates?.length || 0,
+    hasContent,
+    contentLength: hasContent ? response.data.candidates[0].content.parts[0].text.length : 0,
+  });
+
+  if (hasCandidates && !hasContent) {
+    throw new Error('Gemini response missing expected content structure');
+  }
+
+  return response.data;
+}
+
 const worker = new Worker(
   'content-generation',
   async (job) => {
@@ -1508,6 +1509,7 @@ const worker = new Worker(
                   { role: 'user', content: prompt },
                 ],
               };
+
           if (!isGemini && config.ai.useResponseFormat) {
             payload.response_format = { type: 'json_object' };
           }
@@ -1529,7 +1531,7 @@ const worker = new Worker(
           const aiResponse = await aiClient.post(endpoint, payload);
           await job.updateProgress({ stage: 'awaiting_ai_response', percent: 65 });
 
-          // 修复：增强响应验证和调试
+          // 修复：添加响应验证和调试
           try {
             const validatedData = validateAndDebugAIResponse(aiResponse, job.id);
             const message = extractMessagePayload(validatedData);
@@ -1663,7 +1665,12 @@ const worker = new Worker(
       });
 
       await job.updateProgress({ stage: 'completed', percent: 100, fallback: Boolean(fallbackReason) });
-      logger.info(`Job ${job.id} completed successfully.`);
+      logger.info(`Job ${job.id} completed successfully.`, {
+        fallbackReason,
+        hasGeneratedContent: !!generatedContent,
+        contentLength: safeContent.body?.length || 0,
+      });
+
       return {
         ...persisted,
         fallbackReason,
@@ -1712,7 +1719,10 @@ worker.on('stalled', (jobId) => {
 });
 
 worker.on('completed', (job) => {
-  logger.info('Content generation job completed', { jobId: job.id });
+  logger.info('Content generation job completed', {
+    jobId: job.id,
+    timestamp: new Date().toISOString(),
+  });
 });
 
-logger.info('Worker started...');
+logger.info('Enhanced worker started with improved Gemini API handling...');

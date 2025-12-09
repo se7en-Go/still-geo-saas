@@ -1,0 +1,111 @@
+services:
+  # Web API 服务
+  - type: web
+    name: geo-backend-api
+    env: node
+    plan: free
+    buildCommand: "cd backend && npm install"
+    startCommand: "cd backend && npm run api"
+    healthCheckPath: "/api/health"
+    repo: https://github.com/your-username/geo-optimization.git
+    rootDir: backend
+    nodeVersion: "18"
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      # 服务模式标识
+      - key: SERVICE_MODE
+        value: "api"
+      # 数据库配置 - 在Render控制台设置
+      - key: DATABASE_URL
+        sync: false
+      # Redis配置
+      - key: REDIS_URL
+        sync: false
+      - key: REDIS_AVAILABLE
+        value: "true"
+      # JWT配置
+      - key: JWT_SECRET
+        sync: false
+      # AI服务配置
+      - key: AI_API_BASE_URL
+        sync: false
+      - key: AI_API_KEY
+        sync: false
+      - key: CHAT_COMPLETION_MODEL
+        sync: false
+      - key: AI_PROVIDER
+        sync: false
+      # 队列配置
+      - key: CONTENT_QUEUE_ATTEMPTS
+        value: "3"
+      - key: CONTENT_QUEUE_BACKOFF_MS
+        value: "3000"
+      - key: CONTENT_QUEUE_TIMEOUT_MS
+        value: "120000"
+      - key: CONTENT_QUEUE_CONCURRENCY
+        value: "2"
+
+  # Worker 服务
+  - type: worker
+    name: geo-backend-worker
+    env: node
+    plan: free
+    buildCommand: "cd backend && npm install"
+    startCommand: "cd backend && npm run worker"
+    repo: https://github.com/your-username/geo-optimization.git
+    rootDir: backend
+    nodeVersion: "18"
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # 服务模式标识
+      - key: SERVICE_MODE
+        value: "worker"
+      # 数据库配置 - 与API服务相同
+      - key: DATABASE_URL
+        sync: false
+      # Redis配置 - 与API服务相同
+      - key: REDIS_URL
+        sync: false
+      - key: REDIS_AVAILABLE
+        value: "true"
+      # AI服务配置 - 与API服务相同
+      - key: AI_API_BASE_URL
+        sync: false
+      - key: AI_API_KEY
+        sync: false
+      - key: CHAT_COMPLETION_MODEL
+        sync: false
+      - key: AI_PROVIDER
+        sync: false
+      # 嵌入服务配置
+      - key: EMBEDDING_API_BASE_URL
+        sync: false
+      - key: EMBEDDING_API_KEY
+        sync: false
+      - key: EMBEDDING_MODEL
+        sync: false
+      # 队列配置
+      - key: CONTENT_QUEUE_ATTEMPTS
+        value: "3"
+      - key: CONTENT_QUEUE_BACKOFF_MS
+        value: "3000"
+      - key: CONTENT_QUEUE_TIMEOUT_MS
+        value: "120000"
+      - key: CONTENT_QUEUE_CONCURRENCY
+        value: "1"  # Worker只处理一个任务
+
+# PostgreSQL 数据库
+databases:
+  - name: geo-db
+    plan: free
+    databaseName: geodb
+    user: geo_user
+
+# Redis 服务说明
+# 注意: Render的免费计划不包含Redis，建议使用Upstash Redis
+# Upstash配置示例:
+# REDIS_URL=redis://default:password@domain.upstash.io:6379

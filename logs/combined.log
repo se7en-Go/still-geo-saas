@@ -1198,3 +1198,18 @@
 {"level":"info","message":"Starting BullMQ Worker...","service":"geo-backend","timestamp":"2025-12-02T07:18:33.709Z"}
 {"level":"info","message":"Worker started...","service":"geo-backend","timestamp":"2025-12-02T07:18:33.715Z"}
 {"level":"info","message":"Server is running on port 4000","service":"geo-backend","timestamp":"2025-12-02T07:18:33.718Z"}
+{"level":"info","message":"Using REDIS_URL for Redis connection (Upstash format)","service":"geo-backend","timestamp":"2025-12-02T08:39:29.130Z"}
+{"level":"info","message":"Queue initialization","redisAvailable":true,"redisHost":"not configured","redisUrl":"configured","service":"geo-backend","timestamp":"2025-12-02T08:39:29.309Z","useFallback":false}
+{"level":"info","message":"Using REDIS_URL for Redis connection (Upstash format)","service":"geo-backend","timestamp":"2025-12-02T08:39:29.310Z"}
+{"connectionType":"URL-based","host":"from URL","level":"info","message":"Initializing Redis queue","service":"geo-backend","timestamp":"2025-12-02T08:39:29.310Z","tlsEnabled":true}
+{"connectionType":"URL","level":"info","message":"Redis queue initialized successfully","queueName":"content-generation","service":"geo-backend","timestamp":"2025-12-02T08:39:29.313Z","tlsEnabled":true}
+{"level":"warn","message":"Admin user already exists (username: seven or email: lml1140490403@163.com). Aborting.","service":"geo-backend","timestamp":"2025-12-02T09:05:10.282Z"}
+{"level":"warn","message":"Admin user already exists (username: seven or email: lml1140490403@163.com). Aborting.","service":"geo-backend","timestamp":"2025-12-02T09:06:11.690Z"}
+{"level":"info","message":"管理员密码重置成功","service":"geo-backend","timestamp":"2025-12-02T09:07:17.952Z","user":{"email":"lml1140490403@163.com","id":1,"role":"admin","username":"seven"}}
+{"email":"lml1140490403@163.com","id":1,"level":"info","message":"Found existing user:","service":"geo-backend","timestamp":"2025-12-02T09:07:50.254Z","username":"seven"}
+{"level":"info","message":"Updating password for admin user...","service":"geo-backend","timestamp":"2025-12-02T09:07:50.619Z"}
+{"level":"info","message":"Admin password updated successfully!","service":"geo-backend","timestamp":"2025-12-02T09:07:50.668Z","user":{"email":"lml1140490403@163.com","id":1,"role":"admin","username":"seven"}}
+{"level":"info","message":"Password verification test:","service":"geo-backend","success":true,"timestamp":"2025-12-02T09:07:50.814Z"}
+{"error":"ERR caller gone","level":"error","message":"Queue events stream error","service":"geo-backend","timestamp":"2025-12-02T14:23:16.872Z"}
+{"jobId":"1","level":"info","message":"Content job completed","service":"geo-backend","timestamp":"2025-12-09T02:53:07.705Z"}
+{"jobId":"2","level":"info","message":"Content job completed","service":"geo-backend","timestamp":"2025-12-09T03:32:44.654Z"}

@@ -45,72 +45,28 @@ const embeddingClient = embeddingConfigured
     })
   : null;
 
-// 修复：改进 AI 客户端配置
-function createAIClient() {
-  const clientConfig = {
-    baseURL: config.ai.baseUrl,
-    timeout: config.ai.requestTimeoutMs,
-  };
-
-  // 专门为 Gemini 配置 headers
-  if (config.ai.provider === 'gemini') {
-    clientConfig.headers = {
+const aiClient = axios.create({
+  baseURL: config.ai.baseUrl,
+  headers: (() => {
+    const headers = {
       'Content-Type': 'application/json',
-      'x-goog-api-key': config.ai.apiKey || '',
     };
-    clientConfig.params = { key: config.ai.apiKey };
-  } else {
-    clientConfig.headers = {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.ai.apiKey || ''}`,
-    };
-  }
+    if (config.ai.provider === 'gemini') {
+      headers['x-goog-api-key'] = config.ai.apiKey || '';
+    } else {
+      headers.Authorization = `Bearer ${config.ai.apiKey || ''}`;
+    }
+    return headers;
+  })(),
+  params: config.ai.provider === 'gemini' ? { key: config.ai.apiKey } : undefined,
+  timeout: config.ai.requestTimeoutMs,
+});
 
-  return axios.create(clientConfig);
-}
-
-const aiClient = createAIClient();
-
-// 修复：增强的AI响应验证和调试函数
-function validateAndDebugAIResponse(response, jobId) {
-  console.log(`[Job ${jobId}] AI Response Debug Info:`, {
-    status: response.status,
-    hasData: !!response.data,
-    dataType: typeof response.data,
-    dataKeys: response.data ? Object.keys(response.data) : null,
-  });
-
-  if (!response.data) {
-    throw new Error('Empty response data from AI service');
-  }
-
-  const hasCandidates = Array.isArray(response.data.candidates);
-  const hasContent = response.data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-  console.log(`[Job ${jobId}] Gemini Structure Analysis:`, {
-    hasCandidates,
-    candidateCount: response.data.candidates?.length || 0,
-    hasContent,
-    contentLength: hasContent ? response.data.candidates[0].content.parts[0].text.length : 0,
-  });
-
-  if (hasCandidates && !hasContent) {
-    throw new Error('Gemini response missing expected content structure');
-  }
-
-  return response.data;
-}
-
-function resolveChatPath(pathFragment, provider) {
+function resolveChatPath(pathFragment) {
   if (!pathFragment) {
-    return provider === 'gemini' ? '/models/gemini-2.5-flash:generateContent' : '/chat/completions';
+    return '/chat/completions';
   }
-
-  // 确保 pathFragment 不以 / 开头，避免重复
-  const cleanPath = pathFragment.startsWith('/') ? pathFragment.substring(1) : pathFragment;
-
-  // 对于 Gemini，直接使用路径，不额外添加 /
-  return provider === 'gemini' ? `/${cleanPath}` : `/${cleanPath}`;
+  return pathFragment.startsWith('/') ? pathFragment : `/${pathFragment}`;
 }
 
 function extractMessagePayload(data) {
@@ -1517,60 +1473,25 @@ const worker = new Worker(
             };
           }
 
-          // 修复：使用改进的路径解析
-          const endpoint = resolveChatPath(config.ai.chatPath, config.ai.provider);
-          logger.info(`Making AI request to ${config.ai.baseUrl}${endpoint}`, {
-            jobId: job.id,
-            provider: config.ai.provider,
-            model: config.ai.chatModel,
-            payloadSize: JSON.stringify(payload).length,
-          });
-
-          const aiResponse = await aiClient.post(endpoint, payload);
+          const aiResponse = await aiClient.post(resolveChatPath(config.ai.chatPath), payload);
           await job.updateProgress({ stage: 'awaiting_ai_response', percent: 65 });
 
-          // 修复：增强响应验证和调试
           try {
-            const validatedData = validateAndDebugAIResponse(aiResponse, job.id);
-            const message = extractMessagePayload(validatedData);
+            const message = extractMessagePayload(aiResponse?.data);
             const sanitized = normalizeJsonContent(message);
-
-            logger.info('AI response extraction successful', {
-              jobId: job.id,
-              hasMessage: !!message,
-              hasSanitized: !!sanitized,
-              sanitizedLength: sanitized ? sanitized.length : 0,
-            });
-
-            if (!sanitized) {
-              throw new Error('Failed to extract valid JSON from AI response');
-            }
-
+            logger.info('Sanitized AI response', { jobId: job.id, sanitized });
             try {
-              generatedContent = JSON.parse(sanitized);
-              logger.info('AI JSON parsing successful', {
-                jobId: job.id,
-                hasTitle: !!generatedContent?.title,
-                hasMetaDescription: !!generatedContent?.meta_description,
-                hasBody: !!generatedContent?.body,
-              });
+              generatedContent = sanitized ? JSON.parse(sanitized) : null;
             } catch (e) {
-              logger.error('Failed to parse sanitized JSON', {
-                jobId: job.id,
-                sanitized,
-                error: e.message,
-                sanitizedStart: sanitized ? sanitized.substring(0, 200) : null,
-              });
-              throw new Error(`JSON parsing failed: ${e.message}`);
+              logger.error('Failed to parse sanitized JSON', { jobId: job.id, sanitized, error: e.message });
+              throw new Error('Failed to parse AI response');
             }
           } catch (parseErr) {
-            fallbackReason = `AI response parsing failed: ${parseErr.message}`;
-            logger.error('AI response parsing error', {
+            fallbackReason = 'AI response parsing failed.';
+            logger.error('Failed to parse AI response', {
               error: parseErr.message,
               jobId: job.id,
               response: aiResponse.data,
-              responseType: typeof aiResponse.data,
-              responseKeys: aiResponse.data ? Object.keys(aiResponse.data) : null,
             });
           }
         } catch (aiErr) {
@@ -1579,9 +1500,6 @@ const worker = new Worker(
             error: fallbackReason,
             jobId: job.id,
             userId,
-            status: aiErr.response?.status,
-            statusText: aiErr.response?.statusText,
-            errorCode: aiErr.code,
           });
         }
       }

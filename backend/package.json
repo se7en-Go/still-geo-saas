@@ -1,13 +1,15 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "main": "startup.js",
+  "main": "startup-fixed.js",
   "scripts": {
-    "start": "node startup.js",
-    "dev": "nodemon index.js",
-    "worker": "node worker.js",
-    "api": "node index.js",
-    "test": "cross-env NODE_ENV=test jest --runInBand"
+    "start": "node startup-fixed.js",
+    "dev": "nodemon startup-fixed.js",
+    "worker": "SERVICE_MODE=worker node startup-fixed.js",
+    "api": "SERVICE_MODE=api node startup-fixed.js",
+    "legacy": "node startup.js",
+    "test": "cross-env NODE_ENV=test jest --runInBand",
+    "health-check": "node -e \"require('./startup-fixed.js'); setTimeout(() => process.exit(0), 5000);\""
   },
   "keywords": [],
   "author": "",

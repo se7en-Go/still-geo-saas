@@ -182,7 +182,7 @@ const config = {
     connectTimeout: 30000,
     lazyConnect: true,
     retryDelayOnFailover: 100,
-    maxRetriesPerRequest: 3,
+    maxRetriesPerRequest: null, // BullMQ要求设置为null以确保Worker稳定性
   },
   ai: {
     provider,
