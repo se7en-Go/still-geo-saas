@@ -1,0 +1,17 @@
+name: 测试工作流
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 测试运行
+        run: |
+          echo "🚀 GitHub Actions测试工作流运行成功！"
+          echo "⏰ 时间: $(date)"
+          echo "📍 仓库: $GITHUB_REPOSITORY"
+          echo "🎯 这证明GitHub Actions已正确配置"
