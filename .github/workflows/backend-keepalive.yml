@@ -1,204 +1,123 @@
-name: GEO后端保活服务 - 增强版
+name: GEO后端保活服务 - 修复版
 
-# 触发条件：
-# 1. 定时执行 - 每10分钟运行一次（更频繁的检查）
-# 2. 手动触发
-# 3. 推送到main分支时也运行一次
+# 触发条件：每15分钟运行一次，避免GitHub Actions限制
 on:
   schedule:
-    # 每10分钟运行一次，更频繁的检查
-    - cron: '*/10 * * * *'
+    # 每15分钟运行一次 (避免过于频繁)
+    - cron: '*/15 * * * *'
 
   workflow_dispatch:  # 允许手动触发
 
-  push:
-    branches: [ main ]
-
 jobs:
-  # 多次唤醒尝试
-  multi-wake-attempt:
-    name: 🔥 多次唤醒尝试
+  # 简化为单个高效的保活任务
+  keep-alive:
+    name: 🔥 后端保活检查
 
     runs-on: ubuntu-latest
 
     steps:
-      - name: 🚀 开始多次唤醒流程
+      - name: 🚀 开始保活任务
         run: |
           echo "📍 目标: https://geo-backend-vp34.onrender.com"
-          echo "🎯 策略: 多次请求 + 强力唤醒"
-          echo "⏰ 时间: $(date)"
+          echo "⏰ 开始时间: $(date)"
+          echo "🎯 策略: 智能保活 + 多端点验证"
 
-      - name: 🔄 第1次唤醒尝试
-        run: |
-          echo "🔄 第1次唤醒尝试..."
-          curl -v --connect-timeout 60 --max-time 120 \
-            -H "User-Agent: GEO-WakeUp-Enhanced/1.0" \
-            "https://geo-backend-vp34.onrender.com/api/health" || echo "❌ 第1次尝试失败"
-
-      - name: ⏳ 等待30秒
-        run: |
-          echo "⏳ 等待30秒让服务启动..."
-          sleep 30
-
-      - name: 🔄 第2次唤醒尝试
-        run: |
-          echo "🔄 第2次唤醒尝试..."
-          curl -v --connect-timeout 60 --max-time 120 \
-            -H "User-Agent: GEO-WakeUp-Enhanced/1.0" \
-            "https://geo-backend-vp34.onrender.com/api/health" || echo "❌ 第2次尝试失败"
-
-      - name: ⏳ 等待30秒
-        run: |
-          echo "⏳ 再等待30秒..."
-          sleep 30
-
-      - name: 🔄 第3次最终唤醒尝试
-        run: |
-          echo "🔄 第3次最终唤醒尝试..."
-          curl -v --connect-timeout 60 --max-time 120 \
-            -H "User-Agent: GEO-WakeUp-Enhanced/1.0" \
-            "https://geo-backend-vp34.onrender.com/api/health" || echo "❌ 第3次尝试失败"
-
-  # 测试多个端点
-  test-multiple-endpoints:
-    name: 🧪 测试多个端点
-
-    runs-on: ubuntu-latest
-    needs: multi-wake-attempt
-
-    strategy:
-      matrix:
-        endpoint:
-          - '/api/health'
-          - '/api'
-          - '/'
-          - '/api/auth/login'
-
-    steps:
-      - name: 🔍 测试端点: ${{ matrix.endpoint }}
+      - name: 🔍 健康检查
         run: |
           BACKEND_URL="https://geo-backend-vp34.onrender.com"
-          ENDPOINT="${{ matrix.endpoint }}"
-          FULL_URL="${BACKEND_URL}${ENDPOINT}"
 
-          echo "🎯 测试端点: $FULL_URL"
-          echo "⏰ 开始时间: $(date)"
+          echo "🔄 执行健康检查..."
 
-          # 尝试连接，设置更长超时
+          # 第一次尝试 - 健康端点
           HTTP_CODE=$(curl -s -w "%{http_code}" \
-            --connect-timeout 60 \
-            --max-time 120 \
-            --retry 5 \
-            --retry-delay 15 \
-            -H "User-Agent: GEO-Test-Enhanced/1.0" \
-            -o /tmp/response.html \
-            "$FULL_URL")
+            --connect-timeout 30 \
+            --max-time 60 \
+            --retry 2 \
+            --retry-delay 10 \
+            -H "User-Agent: GEO-KeepAlive/1.0" \
+            -o /tmp/health_response.json \
+            "$BACKEND_URL/api/health")
 
-          echo "📊 HTTP状态码: $HTTP_CODE"
+          echo "📊 健康检查状态码: $HTTP_CODE"
 
           if [ "$HTTP_CODE" = "200" ]; then
-            echo "✅ 端点正常响应"
-            echo "📄 响应内容预览:"
-            head -20 /tmp/response.html || echo "响应为空"
-          elif [ "$HTTP_CODE" = "404" ]; then
-            echo "⚠️ 服务在线但路由不存在"
-          elif [ "$HTTP_CODE" = "000" ]; then
-            echo "❌ 连接完全失败"
+            echo "✅ 服务运行正常"
+            cat /tmp/health_response.json
           else
-            echo "⚠️ 其他状态码: $HTTP_CODE"
-            echo "📄 错误响应:"
-            cat /tmp/response.html
+            echo "⚠️ 健康检查失败，尝试强力唤醒..."
+
+            # 强力唤醒 - 访问根路径
+            curl -v --connect-timeout 30 --max-time 60 \
+              -H "User-Agent: GEO-WakeUp/1.0" \
+              "$BACKEND_URL/" || echo "❌ 根路径访问失败"
+
+            # 等待服务启动
+            echo "⏳ 等待20秒让服务启动..."
+            sleep 20
+
+            # 再次检查
+            HTTP_CODE=$(curl -s -w "%{http_code}" \
+              --connect-timeout 30 \
+              --max-time 60 \
+              -H "User-Agent: GEO-KeepAlive/1.0" \
+              -o /tmp/second_response.json \
+              "$BACKEND_URL/api/health")
+
+            echo "📊 第二次检查状态码: $HTTP_CODE"
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "🎉 唤醒成功！"
+            else
+              echo "❌ 唤醒失败，需要手动检查"
+              exit 1
+            fi
           fi
 
-          echo "⏰ 完成时间: $(date)"
-          echo "---"
-
-  # 强力登录测试
-  force-login-test:
-    name: 🔐 强力登录测试
-
-    runs-on: ubuntu-latest
-    needs: test-multiple-endpoints
-
-    steps:
-      - name: 🔍 详细测试登录功能
+      - name: 🔐 功能验证
         run: |
           BACKEND_URL="https://geo-backend-vp34.onrender.com"
 
-          echo "🔐 测试登录功能..."
-          echo "👤 测试账号: lml1140490403@163.com"
+          echo "🔐 验证登录功能..."
 
-          # 发送测试登录请求，超时时间更长
-          echo "🔄 发送登录请求..."
+          # 测试登录端点
           HTTP_CODE=$(curl -s -w "%{http_code}" \
-            --connect-timeout 60 \
-            --max-time 120 \
-            --retry 3 \
-            --retry-delay 20 \
+            --connect-timeout 30 \
+            --max-time 60 \
             -X POST \
             -H "Content-Type: application/json" \
-            -H "User-Agent: GEO-Login-Test/1.0" \
-            -d '{
-              "email": "lml1140490403@163.com",
-              "password": "Zwj#1234567890"
-            }' \
+            -H "User-Agent: GEO-KeepAlive/1.0" \
+            -d '{"email": "test@example.com", "password": "test123"}' \
             -o /tmp/login_response.json \
             "$BACKEND_URL/api/auth/login")
 
-          echo "📊 登录状态码: $HTTP_CODE"
+          echo "📊 登录测试状态码: $HTTP_CODE"
 
-          if [ "$HTTP_CODE" = "200" ]; then
-            echo "🎉 登录成功！"
-            echo "📄 响应内容:"
-            cat /tmp/login_response.json
-          elif [ "$HTTP_CODE" = "401" ]; then
-            echo "✅ 服务正常，认证失败是预期的（测试账号问题）"
-          elif [ "$HTTP_CODE" = "000" ]; then
-            echo "❌ 连接失败，服务可能已休眠"
+          if [ "$HTTP_CODE" = "401" ]; then
+            echo "✅ 登录端点正常响应（认证失败是预期的）"
+          elif [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ 登录功能正常"
           else
-            echo "⚠️ 登录可能有问题"
-            echo "📄 错误响应:"
-            cat /tmp/login_response.json
+            echo "⚠️ 登录端点可能有问题，但服务在线"
           fi
 
-  # 最终状态报告
-  final-status-report:
-    name: 📊 最终状态报告
-
-    runs-on: ubuntu-latest
-    needs: [multi-wake-attempt, test-multiple-endpoints, force-login-test]
-
-    if: always()
-
-    steps:
-      - name: 📋 生成执行报告
+      - name: 📋 生成状态报告
         run: |
-          echo "📊 ===== GEO后端保活服务执行报告 ====="
+          echo "📊 ===== GEO后端保活服务报告 ====="
           echo "📅 执行时间: $(date)"
           echo "🌐 目标服务: https://geo-backend-vp34.onrender.com"
-          echo "🎯 策略: 多次唤醒 + 多端点测试 + 登录验证"
+          echo "✅ 状态: 保活检查完成"
+          echo "🎯 结果: 服务已唤醒并验证"
           echo ""
-
-          echo "🔄 执行结果:"
-          echo "- 多次唤醒尝试: ${{ needs.multi-wake-attempt.result }}"
-          echo "- 端点测试: ${{ needs.test-multiple-endpoints.result }}"
-          echo "- 登录测试: ${{ needs.force-login-test.result }}"
-          echo ""
-
-          if [[ "${{ needs.multi-wake-attempt.result }}" == "success" &&
-                "${{ needs.test-multiple-endpoints.result }}" == "success" &&
-                "${{ needs.force-login-test.result }}" == "success" ]]; then
-            echo "🎉 所有测试通过！后端服务状态良好"
-            echo "💡 建议: 服务正常运行，可以正常使用"
-          else
-            echo "⚠️ 部分测试失败，可能需要手动检查"
-            echo "🔧 建议操作:"
-            echo "1. 检查Render控制台服务状态"
-            echo "2. 手动访问后端URL测试"
-            echo "3. 查看服务日志中的错误信息"
-          fi
-
-          echo ""
-          echo "🌐 用户访问地址: https://still-geo.gocdn.dpdns.org/"
-          echo "🔧 管理控制台: https://dashboard.render.com"
+          echo "🌐 用户访问地址:"
+          echo "- 前端: https://still-geo.gocdn.dpdns.org/"
+          echo "- 后端: https://geo-backend-vp34.onrender.com/api"
           echo "========================================"
+
+      - name: 📧 失败通知 (可选)
+        if: failure()
+        run: |
+          echo "❌ 保活任务失败，请检查服务状态"
+          echo "🔧 建议操作:"
+          echo "1. 访问 https://dashboard.render.com 检查服务状态"
+          echo "2. 手动访问后端URL进行测试"
+          echo "3. 查看服务日志"
