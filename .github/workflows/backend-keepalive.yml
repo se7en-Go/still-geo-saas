@@ -1,21 +1,14 @@
-name: 🛡️ 生产级后端保活服务
+name: Production Backend Keepalive Service
 
-# 设计理念：
-# 1. 分阶段执行 - 唤醒→验证→保活→监控
-# 2. 智能容错 - 每个阶段独立，允许部分失败
-# 3. 渐进式重试 - 指数退避 + 智能等待
-# 4. 状态持久化 - 跨阶段共享状态信息
-# 5. 监控友好 - 详细的状态报告和历史追踪
-
+# Trigger: Every 14 minutes (before 15-minute Render limit)
 on:
   schedule:
-    # 每14分钟运行一次 (在15分钟限制前)
     - cron: '*/14 * * * *'
 
   workflow_dispatch:
     inputs:
       strategy:
-        description: '执行策略'
+        description: 'Execution Strategy'
         required: false
         default: 'standard'
         type: choice
@@ -24,475 +17,271 @@ on:
         - aggressive
         - minimal
 
-      debug_mode:
-        description: '启用调试模式'
-        required: false
-        default: false
-        type: boolean
-
 env:
   BACKEND_URL: 'https://geo-backend-vp34.onrender.com'
   HEALTH_ENDPOINT: '/api/health'
   LOGIN_ENDPOINT: '/api/auth/login'
   USER_AGENT: 'GEO-Production-KeepAlive/2.0'
-  TIMEOUT_BASE: 30
-  MAX_RETRIES: 5
 
 jobs:
-  # ========================================
-  # 阶段1: 初始化和状态检查
-  # ========================================
-  initialize:
-    name: 🚀 初始化和状态检查
+  # Main keepalive job
+  backend-keepalive:
+    name: Backend Keepalive Check
     runs-on: ubuntu-latest
 
-    outputs:
-      strategy: ${{ steps.setup.outputs.strategy }}
-      debug_mode: ${{ steps.setup.outputs.debug_mode }}
-      initial_status: ${{ steps.health_check.outputs.status }}
-      execution_id: ${{ steps.setup.outputs.execution_id }}
+    strategy:
+      matrix:
+        strategy: [${{ github.event.inputs.strategy || 'standard' }}]
+      fail-fast: false
 
     steps:
-      - name: 📋 设置执行环境
-        id: setup
+      - name: Initialize Keepalive Task
         run: |
-          STRATEGY="${{ github.event.inputs.strategy || 'standard' }}"
-          DEBUG="${{ github.event.inputs.debug_mode || 'false' }}"
-          EXECUTION_ID="keepalive-$(date +%Y%m%d-%H%M%S)-${GITHUB_RUN_NUMBER}"
+          echo "Target: $BACKEND_URL"
+          echo "Start Time: $(date)"
+          echo "Strategy: ${{ matrix.strategy }}"
+          echo "Phase: Initialization"
 
-          echo "strategy=$STRATEGY" >> $GITHUB_OUTPUT
-          echo "debug_mode=$DEBUG" >> $GITHUB_OUTPUT
-          echo "execution_id=$EXECUTION_ID" >> $GITHUB_OUTPUT
-
-          echo "🎯 执行策略: $STRATEGY"
-          echo "🐛 调试模式: $DEBUG"
-          echo "🆔 执行ID: $EXECUTION_ID"
-          echo "⏰ 开始时间: $(date)"
-
-      - name: 🏥 初始健康检查
-        id: health_check
+      - name: Phase 1 - Health Check
+        id: health-check
         continue-on-error: true
         run: |
-          echo "🔍 执行初始健康检查..."
+          echo "Executing Phase 1: Health Check..."
 
-          # 快速检查服务状态
+          # Strategy-based timeout settings
+          case "${{ matrix.strategy }}" in
+            "aggressive")
+              CONNECT_TIMEOUT=15
+              MAX_TIME=60
+              ;;
+            "minimal")
+              CONNECT_TIMEOUT=5
+              MAX_TIME=20
+              ;;
+            *)
+              CONNECT_TIMEOUT=10
+              MAX_TIME=30
+              ;;
+          esac
+
+          echo "Timeout Settings: Connect ${CONNECT_TIMEOUT}s, Total ${MAX_TIME}s"
+
+          # Execute health check
           HTTP_CODE=$(curl -s -w "%{http_code}" \
-            --connect-timeout 10 \
-            --max-time 30 \
+            --connect-timeout "$CONNECT_TIMEOUT" \
+            --max-time "$MAX_TIME" \
             --retry 1 \
             --retry-delay 5 \
             -H "User-Agent: $USER_AGENT" \
-            -o /tmp/initial_health.json \
-            "$BACKEND_URL$HEALTH_ENDPOINT")
+            -o /tmp/health_response.json \
+            "$BACKEND_URL$HEALTH_ENDPOINT" || echo "000")
 
-          echo "📊 初始状态码: $HTTP_CODE"
+          echo "Health Check Status Code: $HTTP_CODE"
 
+          # Analyze response
           if [ "$HTTP_CODE" = "200" ]; then
-            echo "status=healthy" >> $GITHUB_OUTPUT
-            echo "✅ 服务已运行"
-            cat /tmp/initial_health.json 2>/dev/null || echo "响应为空"
+            echo "STATUS=healthy" >> $GITHUB_ENV
+            echo "MESSAGE=Service is running normally" >> $GITHUB_ENV
+            echo "SUCCESS: Service is running"
+            cat /tmp/health_response.json 2>/dev/null || echo "Response is empty"
+          elif [ "$HTTP_CODE" = "401" ]; then
+            echo "STATUS=healthy" >> $GITHUB_ENV
+            echo "MESSAGE=Service is online, authentication required" >> $GITHUB_ENV
+            echo "SUCCESS: Service is online (auth required)"
+          elif [ "$HTTP_CODE" = "404" ]; then
+            echo "STATUS=warning" >> $GITHUB_ENV
+            echo "MESSAGE=Route configuration may have issues" >> $GITHUB_ENV
+            echo "WARNING: Service online but route abnormal"
           else
-            echo "status=cold" >> $GITHUB_OUTPUT
-            echo "❌ 服务处于休眠状态"
+            echo "STATUS=unhealthy" >> $GITHUB_ENV
+            echo "MESSAGE=Service needs wakeup" >> $GITHUB_ENV
+            echo "FAILED: Service unreachable"
           fi
 
-      - name: 💾 保存初始状态
+      - name: Phase 2 - Smart Wakeup
+        if: steps.health-check.outputs.STATUS == 'unhealthy'
         run: |
-          echo "📝 保存执行状态到 artifacts..."
-          mkdir -p ./status
-          cat <<EOF > ./status/initial_status.json
-          {
-            "execution_id": "${{ steps.setup.outputs.execution_id }}",
-            "timestamp": "$(date -Iseconds)",
-            "strategy": "${{ steps.setup.outputs.strategy }}",
-            "initial_status": "${{ steps.health_check.outputs.status }}",
-            "backend_url": "$BACKEND_URL"
-          }
-          EOF
+          STRATEGY="${{ matrix.strategy }}"
 
-          cat ./status/initial_status.json
+          echo "Executing Phase 2: Smart Wakeup..."
 
-  # ========================================
-  # 阶段2: 智能唤醒服务
-  # ========================================
-  wakeup:
-    name: 🔥 智能唤醒服务
-    runs-on: ubuntu-latest
-    needs: initialize
-    if: always() && needs.initialize.result == 'success'
+          # Force wakeup access
+          echo "Accessing root path to wake up service..."
+          curl -v --connect-timeout 15 --max-time 60 \
+            -H "User-Agent: $USER_AGENT-Wake" \
+            "$BACKEND_URL/" || echo "Root path access failed"
 
-    outputs:
-      wakeup_success: ${{ steps.wakeup_result.outputs.success }}
-      wakeup_attempts: ${{ steps.wakeup_result.outputs.attempts }}
-      final_status_code: ${{ steps.wakeup_result.outputs.final_status_code }}
-
-    steps:
-      - name: 🔍 决定唤醒策略
-        id: strategy
-        run: |
-          INITIAL_STATUS="${{ needs.initialize.outputs.initial_status }}"
-          STRATEGY="${{ needs.initialize.outputs.strategy }}"
-
-          case "$INITIAL_STATUS" in
-            "healthy")
-              echo "need_wakeup=false" >> $GITHUB_OUTPUT
-              echo "🎉 服务已运行，跳过唤醒阶段"
-              ;;
-            "cold")
-              echo "need_wakeup=true" >> $GITHUB_OUTPUT
-              echo "❄️ 服务休眠，需要唤醒"
-              ;;
-            *)
-              echo "need_wakeup=true" >> $GITHUB_OUTPUT
-              echo "❓ 状态未知，执行唤醒检查"
-              ;;
-          esac
-
-          case "$STRATEGY" in
-            "aggressive")
-              echo "max_attempts=8" >> $GITHUB_OUTPUT
-              echo "base_delay=10" >> $GITHUB_OUTPUT
-              echo "max_time=180" >> $GITHUB_OUTPUT
-              ;;
-            "minimal")
-              echo "max_attempts=3" >> $GITHUB_OUTPUT
-              echo "base_delay=5" >> $GITHUB_OUTPUT
-              echo "max_time=60" >> $GITHUB_OUTPUT
-              ;;
-            *)
-              echo "max_attempts=5" >> $GITHUB_OUTPUT
-              echo "base_delay=15" >> $GITHUB_OUTPUT
-              echo "max_time=120" >> $GITHUB_OUTPUT
-              ;;
-          esac
-
-      - name: 🚀 执行智能唤醒
-        id: wakeup_result
-        if: steps.strategy.outputs.need_wakeup == 'true'
-        run: |
-          MAX_ATTEMPTS="${{ steps.strategy.outputs.max_attempts }}"
-          BASE_DELAY="${{ steps.strategy.outputs.base_delay }}"
-          MAX_TIME="${{ steps.strategy.outputs.max_time }}"
-
-          echo "🔥 开始智能唤醒服务..."
-          echo "📊 最大尝试次数: $MAX_ATTEMPTS"
-          echo "⏱️ 基础延迟: ${BASE_DELAY}秒"
-          echo "🕐 最大执行时间: ${MAX_TIME}秒"
-
-          START_TIME=$(date +%s)
-          SUCCESS=false
-          FINAL_STATUS_CODE="000"
-
-          for attempt in $(seq 1 $MAX_ATTEMPTS); do
-            CURRENT_TIME=$(date +%s)
-            ELAPSED=$((CURRENT_TIME - START_TIME))
-
-            if [ $ELAPSED -gt $MAX_TIME ]; then
-              echo "⏰ 超过最大执行时间，停止尝试"
-              break
-            fi
-
-            echo ""
-            echo "🔄 第 $attempt/$MAX_ATTEMPTS 次唤醒尝试 (耗时: ${ELAPSED}秒)..."
-
-            # 第一阶段：轻量级探测
-            echo "🔍 轻量级探测..."
-            HTTP_CODE=$(curl -s -w "%{http_code}" \
-              --connect-timeout 10 \
-              --max-time 20 \
-              --retry 1 \
-              -H "User-Agent: $USER_AGENT-Probe" \
-              -o /tmp/probe_response.json \
-              "$BACKEND_URL/")
-
-            echo "📡 探测状态码: $HTTP_CODE"
-
-            if [ "$HTTP_CODE" = "200" ]; then
-              echo "✅ 服务已响应！"
-              SUCCESS=true
-              FINAL_STATUS_CODE="$HTTP_CODE"
-              break
-            fi
-
-            # 第二阶段：健康检查
-            if [ $attempt -gt 2 ]; then
-              echo "🏥 执行健康检查..."
-              HTTP_CODE=$(curl -s -w "%{http_code}" \
-                --connect-timeout 15 \
-                --max-time 30 \
-                --retry 1 \
-                -H "User-Agent: $USER_AGENT-Health" \
-                -o /tmp/health_response.json \
-                "$BACKEND_URL$HEALTH_ENDPOINT")
-
-              echo "📊 健康检查状态码: $HTTP_CODE"
-
-              if [ "$HTTP_CODE" = "200" ]; then
-                echo "🎉 健康检查通过！"
-                SUCCESS=true
-                FINAL_STATUS_CODE="$HTTP_CODE"
-                cat /tmp/health_response.json 2>/dev/null || echo "健康检查响应为空"
-                break
-              fi
-            fi
-
-            # 第三阶段：强力唤醒（仅限前几次）
-            if [ $attempt -le 2 ]; then
-              echo "💪 执行强力唤醒..."
-              curl -v --connect-timeout 20 --max-time 40 \
-                -H "User-Agent: $USER-Agent-Wake" \
-                -H "Accept: application/json" \
-                "$BACKEND_URL/api/health" || echo "强力唤醒失败，继续等待..."
-            fi
-
-            if [ $attempt -lt $MAX_ATTEMPTS ]; then
-              # 智能延迟：指数退避 + 随机抖动
-              DELAY=$((BASE_DELAY * (2 ** (attempt - 1))))
-              JITTER=$((RANDOM % 5))
-              TOTAL_DELAY=$((DELAY + JITTER))
-
-              echo "⏳ 等待 ${TOTAL_DELAY} 秒后重试..."
-              sleep $TOTAL_DELAY
-            fi
-          done
-
-          # 保存结果
-          echo "success=$SUCCESS" >> $GITHUB_OUTPUT
-          echo "attempts=$attempt" >> $GITHUB_OUTPUT
-          echo "final_status_code=$FINAL_STATUS_CODE" >> $GITHUB_OUTPUT
-
-          if [ "$SUCCESS" = "true" ]; then
-            echo "🎉 唤醒成功！"
+          # Wait for service startup
+          if [ "$STRATEGY" = "aggressive" ]; then
+            echo "Aggressive strategy: waiting 45 seconds..."
+            sleep 45
+          elif [ "$STRATEGY" = "minimal" ]; then
+            echo "Minimal strategy: waiting 15 seconds..."
+            sleep 15
           else
-            echo "❌ 唤醒失败，但继续执行后续检查"
+            echo "Standard strategy: waiting 30 seconds..."
+            sleep 30
           fi
 
-      - name: ✅ 唤醒结果确认
-        run: |
-          echo "📋 ===== 唤醒阶段总结 ====="
-          echo "🎯 执行ID: ${{ needs.initialize.outputs.execution_id }}"
-          echo "🔥 需要唤醒: ${{ steps.strategy.outputs.need_wakeup }}"
-          echo "✅ 唤醒成功: ${{ steps.wakeup_result.outputs.success }}"
-          echo "🔄 尝试次数: ${{ steps.wakeup_result.outputs.attempts }}"
-          echo "📊 最终状态码: ${{ steps.wakeup_result.outputs.final_status_code }}"
-          echo "==========================="
+          echo "WAKEUP_ATTEMPTED=true" >> $GITHUB_ENV
+          echo "WAKEUP_TIME=$(date)" >> $GITHUB_ENV
 
-  # ========================================
-  # 阶段3: 功能验证
-  # ========================================
-  verification:
-    name: 🧪 功能验证
-    runs-on: ubuntu-latest
-    needs: [initialize, wakeup]
-    if: always() && (needs.initialize.result == 'success' && needs.wakeup.result == 'success')
-
-    strategy:
-      fail-fast: false
-      matrix:
-        test:
-          - name: '基础连接测试'
-            endpoint: '/api/health'
-            method: 'GET'
-            expected_codes: '200,404'
-            timeout: 30
-          - name: 'API根目录测试'
-            endpoint: '/api'
-            method: 'GET'
-            expected_codes: '200,404'
-            timeout: 30
-          - name: '登录端点测试'
-            endpoint: '/api/auth/login'
-            method: 'POST'
-            expected_codes: '200,401,400'
-            timeout: 30
-            data: '{"email": "healthcheck@example.com", "password": "test123"}'
-
-    steps:
-      - name: 🧪 执行测试: ${{ matrix.test.name }}
+      - name: Phase 3 - Verify Wakeup
+        if: steps.health-check.outputs.STATUS == 'unhealthy'
         continue-on-error: true
         run: |
-          TEST_NAME="${{ matrix.test.name }}"
-          ENDPOINT="${{ matrix.test.endpoint }}"
-          METHOD="${{ matrix.test.method }}"
-          EXPECTED_CODES="${{ matrix.test.expected_codes }}"
-          TIMEOUT="${{ matrix.test.timeout }}"
-          TEST_DATA="${{ matrix.test.data }}"
+          echo "Executing Phase 3: Verify Wakeup..."
 
-          echo "🔍 开始测试: $TEST_NAME"
-          echo "🎯 端点: $METHOD $ENDPOINT"
-          echo "⏱️ 超时: ${TIMEOUT}秒"
-          echo "📊 期望状态码: $EXPECTED_CODES"
+          # Health check again
+          HTTP_CODE=$(curl -s -w "%{http_code}" \
+            --connect-timeout 10 \
+            --max-time 45 \
+            --retry 2 \
+            --retry-delay 10 \
+            -H "User-Agent: $USER_AGENT" \
+            -o /tmp/wakeup_response.json \
+            "$BACKEND_URL$HEALTH_ENDPOINT" || echo "000")
 
-          # 构建curl命令
-          CURL_CMD="curl -s -w '%{http_code}'"
-          CURL_CMD="$CURL_CMD --connect-timeout 15"
-          CURL_CMD="$CURL_CMD --max-time $TIMEOUT"
-          CURL_CMD="$CURL_CMD --retry 2"
-          CURL_CMD="$CURL_CMD --retry-delay 5"
-          CURL_CMD="$CURL_CMD -H 'User-Agent: $USER-Agent-Test'"
+          echo "Post-wakeup Status Code: $HTTP_CODE"
 
-          if [ "$METHOD" = "POST" ]; then
-            CURL_CMD="$CURL_CMD -X POST"
-            CURL_CMD="$CURL_CMD -H 'Content-Type: application/json'"
-            CURL_CMD="$CURL_CMD -d '$TEST_DATA'"
-          fi
-
-          CURL_CMD="$CURL_CMD -o /tmp/test_response.json"
-          CURL_CMD="$CURL_CMD '$BACKEND_URL$ENDPOINT'"
-
-          # 执行测试
-          HTTP_CODE=$(eval "$CURL_CMD")
-
-          echo "📡 实际状态码: $HTTP_CODE"
-
-          # 检查结果
-          SUCCESS=false
-          for code in $(echo $EXPECTED_CODES | tr ',' ' '); do
-            if [ "$HTTP_CODE" = "$code" ]; then
-              SUCCESS=true
-              break
-            fi
-          done
-
-          if [ "$SUCCESS" = "true" ]; then
-            echo "✅ 测试通过: $TEST_NAME"
-            echo "📄 响应内容:"
-            cat /tmp/test_response.json 2>/dev/null | head -10 || echo "响应为空或不是JSON"
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "FINAL_STATUS=success" >> $GITHUB_ENV
+            echo "FINAL_MESSAGE=Service wakeup successful" >> $GITHUB_ENV
+            echo "SUCCESS: Wakeup successful!"
+          elif [ "$HTTP_CODE" = "401" ]; then
+            echo "FINAL_STATUS=success" >> $GITHUB_ENV
+            echo "FINAL_MESSAGE=Service wakeup successful, auth required" >> $GITHUB_ENV
+            echo "SUCCESS: Wakeup successful (service online)"
           else
-            echo "❌ 测试失败: $TEST_NAME"
-            echo "📄 错误响应:"
-            cat /tmp/test_response.json 2>/dev/null || echo "无响应内容"
-            exit 1
+            echo "FINAL_STATUS=failed" >> $GITHUB_ENV
+            echo "FINAL_MESSAGE=Wakeup failed, manual intervention needed" >> $GITHUB_ENV
+            echo "FAILED: Wakeup failed"
           fi
 
-  # ========================================
-  # 阶段4: 状态报告和监控
-  # ========================================
-  reporting:
-    name: 📊 状态报告
-    runs-on: ubuntu-latest
-    needs: [initialize, wakeup, verification]
-    if: always()
-
-    steps:
-      - name: 📋 生成综合报告
+      - name: Phase 4 - Function Verification
+        if: env.FINAL_STATUS == 'success' || env.STATUS == 'healthy'
+        continue-on-error: true
         run: |
-          echo "📊 ===== GEO后端保活服务执行报告 ====="
-          echo "🆔 执行ID: ${{ needs.initialize.outputs.execution_id }}"
-          echo "📅 执行时间: $(date)"
-          echo "⏰ 开始时间: $(date -d '@$(date +%s - 3600)')"  # 假设开始时间
-          echo ""
+          echo "Executing Phase 4: Function Verification..."
 
-          echo "🎯 执行策略: ${{ needs.initialize.outputs.strategy }}"
-          echo "🐛 调试模式: ${{ needs.initialize.outputs.debug_mode }}"
-          echo "🌐 目标服务: $BACKEND_URL"
-          echo ""
+          # Test login endpoint
+          HTTP_CODE=$(curl -s -w "%{http_code}" \
+            --connect-timeout 10 \
+            --max-time 30 \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: $USER_AGENT-Test" \
+            -d '{"email": "healthcheck@example.com", "password": "test123"}' \
+            -o /tmp/login_response.json \
+            "$BACKEND_URL$LOGIN_ENDPOINT" || echo "000")
 
-          echo "📊 各阶段执行结果:"
-          echo "  🚀 初始化: ${{ needs.initialize.result }}"
-          echo "  🔥 唤醒: ${{ needs.wakeup.result }}"
-          echo "  🧪 验证: ${{ needs.verification.result }}"
-          echo ""
+          echo "Login Test Status Code: $HTTP_CODE"
 
-          # 判断整体状态
-          if [[ "${{ needs.initialize.result }}" == "success" &&
-                ( "${{ needs.wakeup.result }}" == "success" || "${{ needs.wakeup.result }}" == "skipped" ) &&
-                ( "${{ needs.verification.result }}" == "success" || "${{ needs.verification.result }}" == "skipped" ) ]]; then
-            echo "🎉 整体状态: 成功"
-            echo "💡 建议: 后端服务运行正常，用户可以正常访问"
+          if [ "$HTTP_CODE" = "401" ]; then
+            echo "LOGIN_STATUS=normal" >> $GITHUB_ENV
+            echo "SUCCESS: Login endpoint normal (auth failure expected)"
+          elif [ "$HTTP_CODE" = "200" ]; then
+            echo "LOGIN_STATUS=perfect" >> $GITHUB_ENV
+            echo "SUCCESS: Login function fully normal"
           else
-            echo "⚠️ 整体状态: 部分成功"
-            echo "💡 建议: 部分检查未通过，但基本功能可用"
+            echo "LOGIN_STATUS=warning" >> $GITHUB_ENV
+            echo "WARNING: Login endpoint may have issues"
           fi
 
-          echo ""
-          echo "🔗 相关链接:"
-          echo "  🏠 用户前端: https://still-geo.gocdn.dpdns.org/"
-          echo "  🔧 后端API: $BACKEND_URL"
-          echo "  📊 Render控制台: https://dashboard.render.com"
-          echo "  📈 GitHub Actions: https://github.com/${{ github.repository }}/actions"
-          echo ""
-          echo "========================================="
-
-      - name: 📧 生成状态徽章
-        run: |
-          # 根据结果生成状态信息
-          if [[ "${{ needs.initialize.result }}" == "success" &&
-                ( "${{ needs.wakeup.result }}" == "success" || "${{ needs.wakeup.result }}" == "skipped" ) &&
-                ( "${{ needs.verification.result }}" == "success" || "${{ needs.verification.result }}" == "skipped" ) ]]; then
-            STATUS="success"
-            COLOR="brightgreen"
-            MESSAGE="✅%20在线"
-          else
-            STATUS="warning"
-            COLOR="orange"
-            MESSAGE="⚠️%20检查"
-          fi
-
-          echo "📊 状态徽章信息:"
-          echo "  状态: $STATUS"
-          echo "  颜色: $COLOR"
-          echo "  消息: $MESSAGE"
-          echo ""
-          echo "🔗 徽章URL: https://img.shields.io/badge/GEO%20Backend-$MESSAGE-$COLOR"
-
-      - name: 🔔 通知设置 (仅失败时)
-        if: contains(needs.*.result, 'failure')
-        run: |
-          echo "🚨 检测到执行失败，建议检查以下项目:"
-          echo "1. 📊 查看GitHub Actions执行日志"
-          echo "2. 🔧 登录Render控制台检查服务状态"
-          echo "3. 📋 查看服务日志中的错误信息"
-          echo "4. 🌐 手动访问后端服务进行测试"
-          echo ""
-          echo "🔧 故障排除步骤:"
-          echo "- 检查环境变量配置"
-          echo "- 验证数据库连接"
-          echo "- 确认依赖包安装"
-          echo "- 查看内存和CPU使用情况"
-
-  # ========================================
-  # 阶段5: 清理和归档
-  # ========================================
-  cleanup:
-    name: 🧹 清理和归档
-    runs-on: ubuntu-latest
-    needs: [initialize, wakeup, verification, reporting]
-    if: always()
-
-    steps:
-      - name: 🗂️ 归档执行记录
+      - name: Phase 5 - Status Report
         if: always()
         run: |
-          echo "📝 归档执行记录..."
+          echo "========================================="
+          echo "GEO Backend Keepalive Service Report"
+          echo "========================================="
+          echo "Execution Time: $(date)"
+          echo "Target Service: $BACKEND_URL"
+          echo "Strategy: ${{ matrix.strategy }}"
+          echo ""
 
-          # 创建执行记录
-          cat <<EOF > execution_record.json
-          {
-            "execution_id": "${{ needs.initialize.outputs.execution_id }}",
-            "timestamp": "$(date -Iseconds)",
-            "strategy": "${{ needs.initialize.outputs.strategy }}",
-            "results": {
-              "initialize": "${{ needs.initialize.result }}",
-              "wakeup": "${{ needs.wakeup.result }}",
-              "verification": "${{ needs.verification.result }}",
-              "reporting": "${{ needs.reporting.result }}"
-            },
-            "backend_url": "$BACKEND_URL",
-            "workflow_run_id": "${{ github.run_id }}",
-            "repository": "${{ github.repository }}"
-          }
-          EOF
+          # Initial status
+          if [ "$STATUS" = "healthy" ]; then
+            echo "Initial Status: Service running normally"
+            echo "Details: $MESSAGE"
+          else
+            echo "Initial Status: Service needed wakeup"
+            echo "Details: $MESSAGE"
+          fi
 
-          echo "📊 执行记录已生成:"
-          cat execution_record.json
+          # Wakeup result
+          if [ "$FINAL_STATUS" = "success" ]; then
+            echo "Wakeup Result: Successfully woke up service"
+            echo "Details: $FINAL_MESSAGE"
+          elif [ "$FINAL_STATUS" = "failed" ]; then
+            echo "Wakeup Result: Wakeup failed"
+            echo "Details: $FINAL_MESSAGE"
+          else
+            echo "Wakeup Result: No wakeup needed"
+          fi
 
-      - name: 📊 性能统计
+          # Function verification
+          if [ "$LOGIN_STATUS" = "normal" ]; then
+            echo "Function Verification: Login endpoint normal"
+          elif [ "$LOGIN_STATUS" = "perfect" ]; then
+            echo "Function Verification: All functions perfect"
+          elif [ "$LOGIN_STATUS" = "warning" ]; then
+            echo "Function Verification: Some functions abnormal"
+          else
+            echo "Function Verification: Not executed"
+          fi
+
+          echo ""
+          echo "Overall Assessment:"
+          if [ "$STATUS" = "healthy" ] || [ "$FINAL_STATUS" = "success" ]; then
+            echo "Status: SUCCESS - Backend service is in good condition"
+          else
+            echo "Status: PARTIAL SUCCESS - Needs attention"
+          fi
+
+          echo ""
+          echo "User Access:"
+          echo "- Frontend: https://still-geo.gocdn.dpdns.org/"
+          echo "- Backend: $BACKEND_URL"
+          echo "========================================="
+
+  # Emergency check job
+  emergency-check:
+    name: Emergency Status Check
+    runs-on: ubuntu-latest
+    needs: backend-keepalive
+    if: always() && needs.backend-keepalive.result == 'failure'
+
+    steps:
+      - name: Emergency Diagnosis
         run: |
-          echo "📈 ===== 性能统计 ====="
-          echo "⏱️ 工作流开始时间: ${{ github.event.created_at }}"
-          echo "🔄 当前时间: $(date)"
-          echo "🏃 执行者: ${{ github.actor }}"
-          echo "🌟 仓库: ${{ github.repository }}"
-          echo "🎯 触发事件: ${{ github.event_name }}"
-          echo "========================"
+          echo "========================================="
+          echo "Emergency Status Check"
+          echo "========================================="
+          echo "Check Time: $(date)"
+          echo "Target: $BACKEND_URL"
+          echo ""
+
+          echo "Executing emergency connectivity check..."
+
+          # Quick connectivity check
+          echo "Method 1: HTTP Quick Check"
+          HTTP_CODE=$(curl -s -w "%{http_code}" \
+            --connect-timeout 5 \
+            --max-time 15 \
+            -I \
+            -o /dev/null \
+            "https://geo-backend-vp34.onrender.com/" || echo "000")
+
+          if [ "$HTTP_CODE" != "000" ]; then
+            echo "SUCCESS: HTTP Response $HTTP_CODE - Basic connection normal"
+          else
+            echo "FAILED: HTTP completely unresponsive"
+          fi
+
+          echo ""
+          echo "Recommended Actions:"
+          echo "1. Visit https://dashboard.render.com check service status"
+          echo "2. Manually access backend URL for testing"
+          echo "3. Check service logs"
+          echo "4. Consider restarting service or contact support"
+          echo "========================================="
