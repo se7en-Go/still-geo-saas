@@ -386,7 +386,7 @@ jobs:
             data: '{"email": "healthcheck@example.com", "password": "test123"}'
 
     steps:
-      - name: 🧪 执行测试: ${{ matrix.test.name }}
+      - name: "🧪 执行测试: ${{ matrix.test.name }}"
         continue-on-error: true
         run: |
           TEST_NAME="${{ matrix.test.name }}"
