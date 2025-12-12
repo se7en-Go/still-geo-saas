@@ -34,12 +34,15 @@ env:
   BACKEND_URL: 'https://geo-backend-vp34.onrender.com'
   HEALTH_ENDPOINT: '/api/health'
   LOGIN_ENDPOINT: '/api/auth/login'
-  USER_AGENT: 'GEO-Production-KeepAlive/2.1'
-  TIMEOUT_BASE: 30
-  MAX_RETRIES: 5
+  USER_AGENT: 'GEO-Production-KeepAlive/2.2'
+  TIMEOUT_BASE: 60  # 增加基础超时时间
+  MAX_RETRIES: 3     # 减少重试次数避免过度失败
   # 新增监控变量
   WORKFLOW_ID: 'keepalive-${{ github.run_number }}-${{ github.run_attempt }}'
   LOG_LEVEL: 'info'
+  # 网络配置优化
+  CURL_CONNECT_TIMEOUT: 20
+  CURL_MAX_TIME: 45
 
 jobs:
   # ========================================
@@ -56,6 +59,32 @@ jobs:
       execution_id: ${{ steps.setup.outputs.execution_id }}
 
     steps:
+      - name: 🔍 网络连接诊断
+        run: |
+          echo "🌐 ===== 网络连接诊断 ====="
+          echo "🎯 目标服务: $BACKEND_URL"
+          echo "⏰ 诊断时间: $(date)"
+          echo ""
+
+          # 基础网络测试
+          echo "🔹 测试DNS解析..."
+          nslookup geo-backend-vp34.onrender.com || echo "DNS解析失败"
+
+          echo ""
+          echo "🔹 测试基础连通性..."
+          ping -c 3 geo-backend-vp34.onrender.com || echo "Ping测试失败"
+
+          echo ""
+          echo "🔹 测试HTTPS连接..."
+          timeout 30 openssl s_client -connect geo-backend-vp34.onrender.com:443 -verify_return_error < /dev/null || echo "HTTPS连接测试失败"
+
+          echo ""
+          echo "🔹 检查curl版本..."
+          curl --version | head -1
+
+          echo ""
+          echo "========================================"
+
       - name: 📋 设置执行环境
         id: setup
         run: |
@@ -78,15 +107,18 @@ jobs:
         run: |
           echo "🔍 执行初始健康检查..."
 
-          # 快速检查服务状态
+          # 快速检查服务状态 (优化超时配置)
           HTTP_CODE=$(curl -s -w "%{http_code}" \
-            --connect-timeout 10 \
-            --max-time 30 \
-            --retry 1 \
-            --retry-delay 5 \
+            --connect-timeout $CURL_CONNECT_TIMEOUT \
+            --max-time $CURL_MAX_TIME \
+            --retry $MAX_RETRIES \
+            --retry-delay 10 \
+            --retry-max-time 120 \
             -H "User-Agent: $USER_AGENT" \
+            --compressed \
+            --keepalive-time 30 \
             -o /tmp/initial_health.json \
-            "$BACKEND_URL$HEALTH_ENDPOINT")
+            "$BACKEND_URL$HEALTH_ENDPOINT" || echo "000")
 
           echo "📊 初始状态码: $HTTP_CODE"
 
@@ -153,19 +185,25 @@ jobs:
 
           case "$STRATEGY" in
             "aggressive")
-              echo "max_attempts=8" >> $GITHUB_OUTPUT
-              echo "base_delay=10" >> $GITHUB_OUTPUT
-              echo "max_time=180" >> $GITHUB_OUTPUT
+              echo "max_attempts=6" >> $GITHUB_OUTPUT
+              echo "base_delay=15" >> $GITHUB_OUTPUT
+              echo "max_time=240" >> $GITHUB_OUTPUT
+              echo "connect_timeout=25" >> $GITHUB_OUTPUT
+              echo "max_time_per_request=60" >> $GITHUB_OUTPUT
               ;;
             "minimal")
-              echo "max_attempts=3" >> $GITHUB_OUTPUT
-              echo "base_delay=5" >> $GITHUB_OUTPUT
-              echo "max_time=60" >> $GITHUB_OUTPUT
+              echo "max_attempts=2" >> $GITHUB_OUTPUT
+              echo "base_delay=10" >> $GITHUB_OUTPUT
+              echo "max_time=90" >> $GITHUB_OUTPUT
+              echo "connect_timeout=20" >> $GITHUB_OUTPUT
+              echo "max_time_per_request=45" >> $GITHUB_OUTPUT
               ;;
             *)
-              echo "max_attempts=5" >> $GITHUB_OUTPUT
-              echo "base_delay=15" >> $GITHUB_OUTPUT
-              echo "max_time=120" >> $GITHUB_OUTPUT
+              echo "max_attempts=4" >> $GITHUB_OUTPUT
+              echo "base_delay=20" >> $GITHUB_OUTPUT
+              echo "max_time=180" >> $GITHUB_OUTPUT
+              echo "connect_timeout=$CURL_CONNECT_TIMEOUT" >> $GITHUB_OUTPUT
+              echo "max_time_per_request=$CURL_MAX_TIME" >> $GITHUB_OUTPUT
               ;;
           esac
 
@@ -176,6 +214,8 @@ jobs:
           MAX_ATTEMPTS="${{ steps.strategy.outputs.max_attempts }}"
           BASE_DELAY="${{ steps.strategy.outputs.base_delay }}"
           MAX_TIME="${{ steps.strategy.outputs.max_time }}"
+          CONNECT_TIMEOUT="${{ steps.strategy.outputs.connect_timeout }}"
+          MAX_TIME_PER_REQUEST="${{ steps.strategy.outputs.max_time_per_request }}"
 
           echo "🔥 开始智能唤醒服务..."
           echo "📊 最大尝试次数: $MAX_ATTEMPTS"
@@ -201,17 +241,20 @@ jobs:
             # 多重唤醒策略：按优先级执行
             STRATEGY_SUCCESS=false
 
-            # 策略1: 根路径轻量级探测
+            # 策略1: 根路径轻量级探测 (优化网络配置)
             echo "🔍 策略1: 根路径探测..."
             HTTP_CODE=$(curl -s -w "%{http_code}" \
-              --connect-timeout 8 \
-              --max-time 15 \
-              --retry 2 \
-              --retry-delay 3 \
+              --connect-timeout $CONNECT_TIMEOUT \
+              --max-time $MAX_TIME_PER_REQUEST \
+              --retry $MAX_RETRIES \
+              --retry-delay 10 \
+              --retry-max-time 120 \
               -H "User-Agent: $USER_AGENT-Probe" \
               -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+              --compressed \
+              --keepalive-time 30 \
               -o /tmp/probe_response.json \
-              "$BACKEND_URL/")
+              "$BACKEND_URL/" || echo "000")
 
             echo "📡 根路径状态码: $HTTP_CODE"
 
@@ -220,17 +263,21 @@ jobs:
               STRATEGY_SUCCESS=true
             fi
 
-            # 策略2: API健康检查
+            # 策略2: API健康检查 (优化网络配置)
             if [ "$STRATEGY_SUCCESS" = "false" ]; then
               echo "🏥 策略2: API健康检查..."
               HTTP_CODE=$(curl -s -w "%{http_code}" \
-                --connect-timeout 10 \
-                --max-time 25 \
-                --retry 1 \
+                --connect-timeout $CONNECT_TIMEOUT \
+                --max-time $MAX_TIME_PER_REQUEST \
+                --retry $MAX_RETRIES \
+                --retry-delay 10 \
+                --retry-max-time 120 \
                 -H "User-Agent: $USER_AGENT-Health" \
                 -H "Accept: application/json" \
+                --compressed \
+                --keepalive-time 30 \
                 -o /tmp/health_response.json \
-                "$BACKEND_URL$HEALTH_ENDPOINT")
+                "$BACKEND_URL$HEALTH_ENDPOINT" || echo "000")
 
               echo "📊 健康检查状态码: $HTTP_CODE"
 
