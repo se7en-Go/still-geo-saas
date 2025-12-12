@@ -34,15 +34,18 @@ env:
   BACKEND_URL: 'https://geo-backend-vp34.onrender.com'
   HEALTH_ENDPOINT: '/api/health'
   LOGIN_ENDPOINT: '/api/auth/login'
-  USER_AGENT: 'GEO-Production-KeepAlive/2.2'
-  TIMEOUT_BASE: 60  # 增加基础超时时间
-  MAX_RETRIES: 3     # 减少重试次数避免过度失败
+  USER_AGENT: 'GEO-Production-KeepAlive/2.3'
+  TIMEOUT_BASE: 120  # 大幅增加基础超时时间
+  MAX_RETRIES: 2     # 减少重试次数避免过度失败
   # 新增监控变量
   WORKFLOW_ID: 'keepalive-${{ github.run_number }}-${{ github.run_attempt }}'
   LOG_LEVEL: 'info'
-  # 网络配置优化
-  CURL_CONNECT_TIMEOUT: 20
-  CURL_MAX_TIME: 45
+  # 网络配置优化 - 针对SSL/TLS超时问题
+  CURL_CONNECT_TIMEOUT: 60
+  CURL_MAX_TIME: 120
+  # SSL/TLS优化
+  CURL_SSL_OPTIONS: '--tlsv1.2 --connect-timeout 60 --max-time 120'
+  BACKUP_URL: 'http://geo-backend-vp34.onrender.com'  # HTTP备用方案
 
 jobs:
   # ========================================
@@ -59,10 +62,11 @@ jobs:
       execution_id: ${{ steps.setup.outputs.execution_id }}
 
     steps:
-      - name: 🔍 网络连接诊断
+      - name: 🔍 网络连接诊断和SSL测试
         run: |
           echo "🌐 ===== 网络连接诊断 ====="
           echo "🎯 目标服务: $BACKEND_URL"
+          echo "🎯 备用服务: $BACKUP_URL"
           echo "⏰ 诊断时间: $(date)"
           echo ""
 
@@ -75,12 +79,20 @@ jobs:
           ping -c 3 geo-backend-vp34.onrender.com || echo "Ping测试失败"
 
           echo ""
-          echo "🔹 测试HTTPS连接..."
-          timeout 30 openssl s_client -connect geo-backend-vp34.onrender.com:443 -verify_return_error < /dev/null || echo "HTTPS连接测试失败"
+          echo "🔹 测试HTTPS SSL连接..."
+          timeout 60 openssl s_client -connect geo-backend-vp34.onrender.com:443 -servername geo-backend-vp34.onrender.com -tlsv1.2 < /dev/null || echo "HTTPS连接测试失败"
+
+          echo ""
+          echo "🔹 测试HTTP备用连接..."
+          timeout 30 curl -I --connect-timeout 10 --max-time 20 http://geo-backend-vp34.onrender.com/ || echo "HTTP连接测试失败"
 
           echo ""
           echo "🔹 检查curl版本..."
           curl --version | head -1
+
+          echo ""
+          echo "🔹 SSL证书信息..."
+          timeout 30 curl -vI --connect-timeout 15 --max-time 30 https://geo-backend-vp34.onrender.com/ 2>&1 | grep -E "SSL|TLS|certificate|CN=" || echo "无法获取SSL证书信息"
 
           echo ""
           echo "========================================"
@@ -101,34 +113,69 @@ jobs:
           echo "🆔 执行ID: $EXECUTION_ID"
           echo "⏰ 开始时间: $(date)"
 
-      - name: 🏥 初始健康检查
+      - name: 🏥 初始健康检查 (HTTPS + HTTP备用)
         id: health_check
         continue-on-error: true
         run: |
           echo "🔍 执行初始健康检查..."
 
-          # 快速检查服务状态 (优化超时配置)
+          # 先尝试HTTPS连接 (优化SSL/TLS)
+          echo "🔹 尝试HTTPS连接 (TLSv1.2)..."
           HTTP_CODE=$(curl -s -w "%{http_code}" \
+            --tlsv1.2 \
             --connect-timeout $CURL_CONNECT_TIMEOUT \
             --max-time $CURL_MAX_TIME \
             --retry $MAX_RETRIES \
-            --retry-delay 10 \
-            --retry-max-time 120 \
+            --retry-delay 15 \
+            --retry-max-time 180 \
             -H "User-Agent: $USER_AGENT" \
             --compressed \
             --keepalive-time 30 \
-            -o /tmp/initial_health.json \
-            "$BACKEND_URL$HEALTH_ENDPOINT" || echo "000")
+            -o /tmp/https_health.json \
+            "$BACKEND_URL$HEALTH_ENDPOINT" 2>/dev/null || echo "000")
 
-          echo "📊 初始状态码: $HTTP_CODE"
+          echo "📊 HTTPS状态码: $HTTP_CODE"
 
-          if [ "$HTTP_CODE" = "200" ]; then
+          # 如果HTTPS失败，尝试HTTP备用连接
+          if [ "$HTTP_CODE" = "000" ]; then
+            echo "🔹 HTTPS失败，尝试HTTP备用连接..."
+            HTTP_CODE=$(curl -s -w "%{http_code}" \
+              --connect-timeout 30 \
+              --max-time 60 \
+              --retry 1 \
+              --retry-delay 10 \
+              -H "User-Agent: $USER_AGENT-HTTP" \
+              --compressed \
+              -o /tmp/http_health.json \
+              "$BACKUP_URL$HEALTH_ENDPOINT" 2>/dev/null || echo "000")
+
+            echo "📊 HTTP备用状态码: $HTTP_CODE"
+          fi
+
+          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ]; then
             echo "status=healthy" >> $GITHUB_OUTPUT
+            echo "MESSAGE=Service is running normally" >> $GITHUB_OUTPUT
             echo "✅ 服务已运行"
-            cat /tmp/initial_health.json 2>/dev/null || echo "响应为空"
+            # 显示响应内容
+            if [ -f /tmp/https_health.json ]; then
+              cat /tmp/https_health.json 2>/dev/null | head -5 || echo "HTTPS响应为空"
+            elif [ -f /tmp/http_health.json ]; then
+              cat /tmp/http_health.json 2>/dev/null | head -5 || echo "HTTP响应为空"
+            fi
           else
             echo "status=cold" >> $GITHUB_OUTPUT
-            echo "❌ 服务处于休眠状态"
+            echo "MESSAGE=Service is completely unreachable" >> $GITHUB_OUTPUT
+            echo "❌ 服务完全不可达 (HTTPS和HTTP都失败)"
+
+            # 显示连接诊断信息
+            echo "🔍 连接诊断:"
+            echo "- HTTPS连接: $([ -f /tmp/https_health.json ] && echo "成功" || echo "超时失败")"
+            echo "- HTTP备用: $([ -f /tmp/http_health.json ] && echo "成功" || echo "超时失败")"
+
+            # 尝试更基础的连接测试
+            echo "🔹 尝试基础TCP连接测试..."
+            timeout 30 nc -zv geo-backend-vp34.onrender.com 443 2>&1 || echo "TCP连接测试失败"
+            timeout 30 nc -zv geo-backend-vp34.onrender.com 80 2>&1 || echo "TCP 80端口连接测试失败"
           fi
 
       - name: 💾 保存初始状态
