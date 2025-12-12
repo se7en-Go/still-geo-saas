@@ -13,6 +13,7 @@ const ruleRoutes = require('./routes/rules');
 const contentRoutes = require('./routes/content');
 const knowledgeSetRoutes = require('./routes/knowledgeSets');
 const geoRoutes = require('./routes/geo');
+const { router: healthRoutes } = require('./routes/health');
 const errorHandler = require('./middleware/errorHandler');
 
 function createApp() {
@@ -59,18 +60,10 @@ function createApp() {
   app.use('/api/content', contentRoutes);
   app.use('/api/knowledge-sets', knowledgeSetRoutes);
   app.use('/api/geo', geoRoutes);
+  app.use('/api/health', healthRoutes);
 
   app.get('/', (req, res) => {
     res.send('GEO SaaS Platform Backend is running!');
-  });
-
-  // 健康检查端点
-  app.get('/api/health', (req, res) => {
-    res.status(200).json({
-      status: 'OK',
-      timestamp: new Date().toISOString(),
-      service: 'geo-backend'
-    });
   });
 
   app.use(errorHandler);

@@ -7,24 +7,47 @@ const { config } = require('./config');
 const db = require('./db');
 const logger = require('./logger');
 
-const connection = config.redis.url
-  ? {
+// 修复：使用与queue-fixed.js相同的连接配置
+function createOptimizedConnection() {
+  const useFallback = process.env.NODE_ENV === 'production' &&
+                      process.env.REDIS_AVAILABLE === 'false';
+
+  if (useFallback) {
+    logger.warn('Worker using memory fallback queue - Redis not available');
+    return null;
+  }
+
+  // 优先使用REDIS_URL
+  if (config.redis.url) {
+    return {
       url: config.redis.url,
       connectTimeout: config.redis.connectTimeout,
       lazyConnect: config.redis.lazyConnect,
       retryDelayOnFailover: config.redis.retryDelayOnFailover,
-      maxRetriesPerRequest: null,
+      maxRetriesPerRequest: null, // BullMQ要求Queue和Worker都使用null确保稳定性
       enableOfflineQueue: false,
-      family: 4, // 强制使用IPv4
+      family: 4,
       keepAlive: 30000,
-      tls: {}, // Enable TLS for Upstash Redis Cloud
-    }
-  : {
-      host: config.redis.host,
-      port: config.redis.port,
-      password: config.redis.password,
-      maxRetriesPerRequest: null,
+      tls: config.redis.url.includes('upstash') ? {} : undefined,
     };
+  }
+
+  // 备用参数配置
+  return {
+    host: config.redis.host,
+    port: config.redis.port,
+    password: config.redis.password,
+    connectTimeout: config.redis.connectTimeout,
+    lazyConnect: config.redis.lazyConnect,
+    retryDelayOnFailover: config.redis.retryDelayOnFailover,
+    maxRetriesPerRequest: null,
+    enableOfflineQueue: false,
+    family: 4,
+    keepAlive: 30000,
+  };
+}
+
+const connection = createOptimizedConnection();
 
 const MAX_KNOWLEDGE_BASE_CHAR_LENGTH = 8000;
 const MAX_KNOWLEDGE_BASE_SNIPPETS = 5;
@@ -1519,14 +1542,65 @@ const worker = new Worker(
 
           // 修复：使用改进的路径解析
           const endpoint = resolveChatPath(config.ai.chatPath, config.ai.provider);
-          logger.info(`Making AI request to ${config.ai.baseUrl}${endpoint}`, {
-            jobId: job.id,
-            provider: config.ai.provider,
-            model: config.ai.chatModel,
-            payloadSize: JSON.stringify(payload).length,
-          });
+          const maxRetries = 3;
+          const baseDelay = 1000; // 1秒基础延迟
 
-          const aiResponse = await aiClient.post(endpoint, payload);
+          let aiResponse = null;
+          let lastError = null;
+
+          // 添加重试机制
+          for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+              logger.info(`Making AI request (attempt ${attempt}/${maxRetries}) to ${config.ai.baseUrl}${endpoint}`, {
+                jobId: job.id,
+                provider: config.ai.provider,
+                model: config.ai.chatModel,
+                payloadSize: JSON.stringify(payload).length,
+              });
+
+              aiResponse = await aiClient.post(endpoint, payload, {
+                timeout: config.ai.requestTimeoutMs,
+              });
+
+              // 如果成功，跳出重试循环
+              break;
+
+            } catch (err) {
+              lastError = err;
+              logger.warn(`AI request attempt ${attempt} failed`, {
+                jobId: job.id,
+                attempt,
+                error: err.message,
+                status: err.response?.status,
+                statusText: err.response?.statusText,
+              });
+
+              // 如果是最后一次尝试，不要等待
+              if (attempt === maxRetries) {
+                break;
+              }
+
+              // 指数退避延迟
+              const delay = baseDelay * Math.pow(2, attempt - 1);
+              logger.info(`Waiting ${delay}ms before retry...`, { jobId: job.id, attempt });
+              await new Promise(resolve => setTimeout(resolve, delay));
+
+              // 更新进度显示重试状态
+              await job.updateProgress({
+                stage: `retrying_ai_request`,
+                percent: 60,
+                attempt,
+                maxRetries,
+                lastError: err.message
+              });
+            }
+          }
+
+          // 如果所有重试都失败了
+          if (!aiResponse) {
+            throw lastError || new Error('AI request failed after all retries');
+          }
+
           await job.updateProgress({ stage: 'awaiting_ai_response', percent: 65 });
 
           // 修复：增强响应验证和调试
@@ -1700,10 +1774,13 @@ const worker = new Worker(
   }
 );
 
+// 修复：添加增强的错误处理和启动验证
 worker.on('failed', (job, err) => {
   logger.error('Content generation job failed', {
     jobId: job.id,
     error: err.message,
+    userId: job?.data?.userId,
+    attemptsMade: job?.attemptsMade,
   });
 });
 
@@ -1712,7 +1789,48 @@ worker.on('stalled', (jobId) => {
 });
 
 worker.on('completed', (job) => {
-  logger.info('Content generation job completed', { jobId: job.id });
+  logger.info('Content generation job completed', {
+    jobId: job.id,
+    userId: job?.data?.userId,
+    duration: Date.now() - job.timestamp,
+  });
 });
 
-logger.info('Worker started...');
+// 修复：添加Worker启动错误处理
+worker.on('error', (err) => {
+  logger.error('Worker failed to start or encountered critical error', {
+    error: err.message,
+    stack: err.stack,
+  });
+});
+
+// 修复：添加连接状态验证
+worker.on('ready', () => {
+  logger.info('Worker is ready and connected to Redis');
+});
+
+worker.on('closing', () => {
+  logger.info('Worker is shutting down');
+});
+
+// 验证Worker启动状态
+setTimeout(async () => {
+  try {
+    const waiting = await worker.getWaiting();
+    const active = await worker.getActive();
+    logger.info('Worker status verified', {
+      waitingJobs: waiting.length,
+      activeJobs: active.length,
+      workerId: worker.id,
+    });
+  } catch (err) {
+    logger.error('Worker status verification failed', { error: err.message });
+  }
+}, 5000);
+
+logger.info('Worker started with configuration:', {
+  queue: 'content-generation',
+  concurrency: config.queue.concurrency,
+  lockDuration: config.queue.timeoutMs,
+  redisUrl: config.redis.url ? 'configured' : 'not configured',
+});
