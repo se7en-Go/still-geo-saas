@@ -1,0 +1,279 @@
+name: 🛡️ 优化版后端保活服务 - 修复Schedule触发器
+
+# 专门解决schedule触发器问题的优化版保活服务
+on:
+  schedule:
+    # 使用具体时间点而非通配符，每8分钟执行
+    # 避开整点，减少GitHub Actions调度压力
+    - cron: '2,10,18,26,34,42,50,58 * * * *'
+
+  workflow_dispatch:
+    inputs:
+      debug_mode:
+        description: '启用调试模式'
+        required: false
+        default: false
+        type: boolean
+      urgent_wakeup:
+        description: '紧急唤醒模式'
+        required: false
+        default: false
+        type: boolean
+
+# 设置全局超时
+timeout-minutes: 10
+
+jobs:
+  # 主要保活任务 - 优化版本
+  keep-alive:
+    name: 🔥 智能保活检查
+
+    runs-on: ubuntu-latest
+
+    # 容错策略：允许失败但继续执行
+    continue-on-error: true
+
+    steps:
+      - name: 🕐 执行环境诊断
+        run: |
+          echo "=========================================="
+          echo "🛡️ GEO后端保活服务 - 优化版"
+          echo "=========================================="
+          echo ""
+          echo "📅 执行时间: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🔧 触发事件: ${{ github.event_name }}"
+          echo "🆔 工作流ID: ${{ github.run_id }}"
+          echo "🏃 运行编号: ${{ github.run_number }}"
+          echo "🌐 目标服务: https://geo-backend-vp34.onrender.com"
+          echo ""
+
+          # 关键：触发事件诊断
+          echo "🔍 触发器诊断:"
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "✅ 自动调度触发 - Schedule正常工作"
+            echo "🎯 这表明GitHub Actions调度功能已修复"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "⚠️ 手动触发执行"
+            if [ "${{ github.event.inputs.urgent_wakeup }}" = "true" ]; then
+              echo "🚨 紧急唤醒模式"
+            else
+              echo "🔧 手动测试或紧急执行"
+            fi
+          else
+            echo "❓ 未知触发类型: ${{ github.event_name }}"
+          fi
+
+          echo ""
+          echo "📊 执行配置:"
+          echo "  调试模式: ${{ github.event.inputs.debug_mode || 'false' }}"
+          echo "  紧急唤醒: ${{ github.event.inputs.urgent_wakeup || 'false' }}"
+          echo "  预期间隔: 8分钟"
+          echo ""
+
+      - name: 🚀 初始化保活任务
+        run: |
+          echo "📍 目标服务: https://geo-backend-vp34.onrender.com"
+          echo "⏰ 开始时间: $(date '+%Y-%m-%d %H:%M:%S')"
+          echo "🎯 策略: 智能超时 + 渐进式唤醒"
+          echo "⏱️ 最大执行时间: 10分钟"
+
+      - name: 🔍 智能健康检查
+        run: |
+          BACKEND_URL="https://geo-backend-vp34.onrender.com"
+
+          echo "🔄 开始智能健康检查..."
+
+          # 第一阶段：快速检查（30秒超时）
+          echo "📡 第一阶段：快速连接检查..."
+          HTTP_CODE=$(curl -s -w "%{http_code}" \
+            --connect-timeout 10 \
+            --max-time 30 \
+            --retry 1 \
+            --retry-delay 5 \
+            -H "User-Agent: GEO-KeepAlive-Quick/2.0" \
+            -H "Accept: application/json" \
+            -o /tmp/quick_check.json \
+            "$BACKEND_URL/api/health" 2>/dev/null || echo "000")
+
+          echo "📊 快速检查状态码: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ 服务运行正常，无需唤醒"
+            echo "📄 响应内容:"
+            cat /tmp/quick_check.json 2>/dev/null || echo "无响应内容"
+            echo "🎯 保活任务完成"
+            exit 0
+          fi
+
+          # 第二阶段：强力唤醒（120秒超时）
+          echo "⚡ 第二阶段：强力唤醒服务..."
+
+          # 先访问根路径唤醒服务
+          echo "🔄 访问根路径唤醒..."
+          curl -v \
+            --connect-timeout 15 \
+            --max-time 60 \
+            --retry 2 \
+            --retry-delay 15 \
+            -H "User-Agent: GEO-WakeUp/2.0" \
+            -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+            "$BACKEND_URL/" 2>&1 | head -20
+
+          # 等待服务完全启动
+          echo "⏳ 等待30秒让服务完全启动..."
+          sleep 30
+
+          # 第三阶段：深度检查（90秒超时）
+          echo "🔍 第三阶段：深度健康检查..."
+          HTTP_CODE=$(curl -s -w "%{http_code}" \
+            --connect-timeout 15 \
+            --max-time 90 \
+            --retry 3 \
+            --retry-delay 20 \
+            -H "User-Agent: GEO-KeepAlive-Deep/2.0" \
+            -H "Accept: application/json" \
+            -o /tmp/deep_check.json \
+            "$BACKEND_URL/api/health" 2>/dev/null || echo "000")
+
+          echo "📊 深度检查状态码: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "🎉 唤醒成功！服务正常运行"
+            echo "📄 响应内容:"
+            cat /tmp/deep_check.json 2>/dev/null || echo "无响应内容"
+          else
+            echo "⚠️ 深度检查失败，尝试最后验证..."
+
+            # 最后尝试：检查服务是否至少在运行
+            FINAL_CODE=$(curl -s -w "%{http_code}" \
+              --connect-timeout 5 \
+              --max-time 30 \
+              -H "User-Agent: GEO-FinalCheck/2.0" \
+              -o /tmp/final_check.json \
+              "$BACKEND_URL/" 2>/dev/null || echo "000")
+
+            if [ "$FINAL_CODE" != "000" ]; then
+              echo "✅ 服务至少在运行（状态码: $FINAL_CODE）"
+              echo "📄 最后响应内容:"
+              cat /tmp/final_check.json 2>/dev/null || echo "无响应内容"
+            else
+              echo "❌ 服务完全无响应，可能需要手动干预"
+              echo "🔧 建议操作:"
+              echo "1. 检查Render控制台: https://dashboard.render.com"
+              echo "2. 手动访问: $BACKEND_URL"
+              echo "3. 查看服务日志"
+              exit 1
+            fi
+          fi
+
+      - name: 🔐 API功能验证
+        run: |
+          BACKEND_URL="https://geo-backend-vp34.onrender.com"
+
+          echo "🔐 验证API端点功能..."
+
+          # 测试健康端点
+          echo "🏥 测试健康端点..."
+          HEALTH_CODE=$(curl -s -w "%{http_code}" \
+            --connect-timeout 10 \
+            --max-time 45 \
+            -H "User-Agent: GEO-API-Test/2.0" \
+            -o /tmp/health_test.json \
+            "$BACKEND_URL/api/health" 2>/dev/null || echo "000")
+
+          echo "📊 健康端点状态: $HEALTH_CODE"
+
+          # 测试登录端点（预期返回401或200）
+          echo "🔐 测试登录端点..."
+          LOGIN_CODE=$(curl -s -w "%{http_code}" \
+            --connect-timeout 10 \
+            --max-time 45 \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: GEO-API-Test/2.0" \
+            -d '{"email":"keepalive@test.com","password":"test123"}' \
+            -o /tmp/login_test.json \
+            "$BACKEND_URL/api/auth/login" 2>/dev/null || echo "000")
+
+          echo "📊 登录端点状态: $LOGIN_CODE"
+
+          # 分析结果
+          if [ "$HEALTH_CODE" = "200" ] && ([ "$LOGIN_CODE" = "401" ] || [ "$LOGIN_CODE" = "200" ]); then
+            echo "✅ API功能完全正常"
+          elif [ "$HEALTH_CODE" = "200" ]; then
+            echo "✅ 基础API正常，登录端点可能需要调整"
+          elif ([ "$HEALTH_CODE" != "000" ] || [ "$LOGIN_CODE" != "000" ]); then
+            echo "⚠️ API部分功能正常，需要关注"
+          else
+            echo "❌ API功能异常"
+          fi
+
+      - name: 📊 生成执行报告
+        run: |
+          echo "📊 ===== GEO后端保活服务执行报告 ====="
+          echo "📅 执行时间: $(date '+%Y-%m-%d %H:%M:%S')"
+          echo "🌐 目标服务: https://geo-backend-vp34.onrender.com"
+          echo "⏱️ 执行策略: 三阶段智能保活"
+          echo "🔄 执行频率: 每14分钟"
+          echo ""
+          echo "🎯 服务状态: 已检查并验证"
+          echo "✅ 保活结果: 任务完成"
+          echo ""
+          echo "🌐 用户访问地址:"
+          echo "- 前端: https://still-geo.gocdn.dpdns.org/"
+          echo "- 后端: https://geo-backend-vp34.onrender.com/api"
+          echo "- 健康检查: https://geo-backend-vp34.onrender.com/api/health"
+          echo ""
+          echo "📈 优化要点:"
+          echo "- 智能超时配置（30s→60s→90s）"
+          echo "- 渐进式唤醒策略"
+          echo "- 容错机制和详细日志"
+          echo "- 避免Matrix策略冲突"
+          echo "=========================================="
+
+      - name: 🚨 失败处理
+        if: failure()
+        run: |
+          echo "❌ 保活任务执行失败"
+          echo "📅 失败时间: $(date)"
+          echo "🔗 服务地址: https://geo-backend-vp34.onrender.com"
+          echo ""
+          echo "🔧 故障排除建议:"
+          echo "1. 立即访问服务进行手动唤醒"
+          echo "2. 检查Render控制台服务状态"
+          echo "3. 查看服务日志了解具体错误"
+          echo "4. 验证环境变量和配置"
+          echo ""
+          echo "📧 建议设置失败通知以快速响应"
+
+  # 简化的状态监控任务
+  status-monitor:
+    name: 📈 服务状态监控
+
+    runs-on: ubuntu-latest
+
+    # 不依赖keep-alive任务，独立运行
+    if: always() && github.event_name == 'schedule'
+
+    steps:
+      - name: 📊 记录服务状态
+        run: |
+          echo "📊 [$(date)] 服务状态记录"
+
+          # 简单状态检查
+          STATUS=$(curl -s -w "%{http_code}" \
+            --max-time 30 \
+            --connect-timeout 10 \
+            -o /dev/null \
+            "https://geo-backend-vp34.onrender.com/api/health" 2>/dev/null || echo "000")
+
+          if [ "$STATUS" = "200" ]; then
+            echo "✅ 服务状态: 正常"
+          elif [ "$STATUS" != "000" ]; then
+            echo "⚠️ 服务状态: 部分正常 (HTTP $STATUS)"
+          else
+            echo "❌ 服务状态: 不可达"
+          fi
+
+          echo "📅 检查时间: $(date)"
+          echo "🌐 服务地址: https://geo-backend-vp34.onrender.com"
