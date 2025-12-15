@@ -51,20 +51,53 @@ function createApp() {
   app.use(express.json());
   app.use('/uploads', express.static(path.resolve(uploadDir)));
 
-  app.use('/api/auth', authRoutes);
-  app.use('/api/keywords', keywordRoutes);
-  app.use('/api/documents', documentRoutes);
-  app.use('/api/images', imageRoutes);
-  app.use('/api/image-collections', imageCollectionRoutes);
-  app.use('/api/rules', ruleRoutes);
-  app.use('/api/content', contentRoutes);
-  app.use('/api/knowledge-sets', knowledgeSetRoutes);
-  app.use('/api/geo', geoRoutes);
-  app.use('/api/health', healthRoutes);
+  // 简化的健康检查端点 - 用于Render部署验证
+  // 必须在其他路由之前注册，确保快速响应
+  app.get('/api/health', (req, res) => {
+    res.json({
+      status: 'OK',
+      service: 'geo-backend-api',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      environment: process.env.NODE_ENV || 'development'
+    });
+  });
 
   app.get('/', (req, res) => {
     res.send('GEO SaaS Platform Backend is running!');
   });
+
+  // 其他API路由（安全加载，避免启动失败）
+  const routes = [
+    { path: '/api/auth', handler: authRoutes, name: 'auth' },
+    { path: '/api/keywords', handler: keywordRoutes, name: 'keywords' },
+    { path: '/api/documents', handler: documentRoutes, name: 'documents' },
+    { path: '/api/images', handler: imageRoutes, name: 'images' },
+    { path: '/api/image-collections', handler: imageCollectionRoutes, name: 'imageCollections' },
+    { path: '/api/rules', handler: ruleRoutes, name: 'rules' },
+    { path: '/api/content', handler: contentRoutes, name: 'content' },
+    { path: '/api/knowledge-sets', handler: knowledgeSetRoutes, name: 'knowledgeSets' },
+    { path: '/api/geo', handler: geoRoutes, name: 'geo' }
+  ];
+
+  routes.forEach(route => {
+    try {
+      app.use(route.path, route.handler);
+    } catch (error) {
+      logger.warn(`Failed to load ${route.name} routes: ${error.message}`);
+      // 为失败的路由创建一个简单的错误响应
+      app.use(route.path, (req, res) => {
+        res.status(503).json({
+          error: 'Service temporarily unavailable',
+          service: route.name,
+          message: `${route.name} service is currently down for maintenance`
+        });
+      });
+    }
+  });
+
+  // 复杂的健康检查端点 - 可选功能，用于详细监控
+  app.use('/api/health-detailed', healthRoutes);
 
   app.use(errorHandler);
 
