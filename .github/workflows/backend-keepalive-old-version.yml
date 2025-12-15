@@ -1,0 +1,123 @@
+name: GEO后端保活服务 - 修复版
+
+# 触发条件：每15分钟运行一次，避免GitHub Actions限制
+on:
+  schedule:
+    # 每15分钟运行一次 (避免过于频繁)
+    - cron: '*/15 * * * *'
+
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  # 简化为单个高效的保活任务
+  keep-alive:
+    name: 🔥 后端保活检查
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🚀 开始保活任务
+        run: |
+          echo "📍 目标: https://geo-backend-vp34.onrender.com"
+          echo "⏰ 开始时间: $(date)"
+          echo "🎯 策略: 智能保活 + 多端点验证"
+
+      - name: 🔍 健康检查
+        run: |
+          BACKEND_URL="https://geo-backend-vp34.onrender.com"
+
+          echo "🔄 执行健康检查..."
+
+          # 第一次尝试 - 健康端点
+          HTTP_CODE=$(curl -s -w "%{http_code}" \
+            --connect-timeout 30 \
+            --max-time 60 \
+            --retry 2 \
+            --retry-delay 10 \
+            -H "User-Agent: GEO-KeepAlive/1.0" \
+            -o /tmp/health_response.json \
+            "$BACKEND_URL/api/health")
+
+          echo "📊 健康检查状态码: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ 服务运行正常"
+            cat /tmp/health_response.json
+          else
+            echo "⚠️ 健康检查失败，尝试强力唤醒..."
+
+            # 强力唤醒 - 访问根路径
+            curl -v --connect-timeout 30 --max-time 60 \
+              -H "User-Agent: GEO-WakeUp/1.0" \
+              "$BACKEND_URL/" || echo "❌ 根路径访问失败"
+
+            # 等待服务启动
+            echo "⏳ 等待20秒让服务启动..."
+            sleep 20
+
+            # 再次检查
+            HTTP_CODE=$(curl -s -w "%{http_code}" \
+              --connect-timeout 30 \
+              --max-time 60 \
+              -H "User-Agent: GEO-KeepAlive/1.0" \
+              -o /tmp/second_response.json \
+              "$BACKEND_URL/api/health")
+
+            echo "📊 第二次检查状态码: $HTTP_CODE"
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "🎉 唤醒成功！"
+            else
+              echo "❌ 唤醒失败，需要手动检查"
+              exit 1
+            fi
+          fi
+
+      - name: 🔐 功能验证
+        run: |
+          BACKEND_URL="https://geo-backend-vp34.onrender.com"
+
+          echo "🔐 验证登录功能..."
+
+          # 测试登录端点
+          HTTP_CODE=$(curl -s -w "%{http_code}" \
+            --connect-timeout 30 \
+            --max-time 60 \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: GEO-KeepAlive/1.0" \
+            -d '{"email": "test@example.com", "password": "test123"}' \
+            -o /tmp/login_response.json \
+            "$BACKEND_URL/api/auth/login")
+
+          echo "📊 登录测试状态码: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" = "401" ]; then
+            echo "✅ 登录端点正常响应（认证失败是预期的）"
+          elif [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ 登录功能正常"
+          else
+            echo "⚠️ 登录端点可能有问题，但服务在线"
+          fi
+
+      - name: 📋 生成状态报告
+        run: |
+          echo "📊 ===== GEO后端保活服务报告 ====="
+          echo "📅 执行时间: $(date)"
+          echo "🌐 目标服务: https://geo-backend-vp34.onrender.com"
+          echo "✅ 状态: 保活检查完成"
+          echo "🎯 结果: 服务已唤醒并验证"
+          echo ""
+          echo "🌐 用户访问地址:"
+          echo "- 前端: https://still-geo.gocdn.dpdns.org/"
+          echo "- 后端: https://geo-backend-vp34.onrender.com/api"
+          echo "========================================"
+
+      - name: 📧 失败通知 (可选)
+        if: failure()
+        run: |
+          echo "❌ 保活任务失败，请检查服务状态"
+          echo "🔧 建议操作:"
+          echo "1. 访问 https://dashboard.render.com 检查服务状态"
+          echo "2. 手动访问后端URL进行测试"
+          echo "3. 查看服务日志"

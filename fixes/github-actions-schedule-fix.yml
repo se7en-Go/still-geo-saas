@@ -1,0 +1,62 @@
+name: 🔧 简化调度测试 - 诊断Schedule触发器
+
+# 极简工作流用于测试schedule触发器是否工作
+on:
+  schedule:
+    # 每5分钟执行一次 - 用于快速验证
+    - cron: '*/5 * * * *'
+
+  workflow_dispatch:
+    inputs:
+      test_reason:
+        description: '测试原因'
+        required: false
+        default: 'manual_test'
+
+jobs:
+  test-schedule:
+    name: ⏰ 测试Schedule触发器
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🕐 记录执行时间和触发事件
+        run: |
+          echo "==== GitHub Actions Schedule 测试 ===="
+          echo "⏰ 当前时间: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🔧 触发事件: ${{ github.event_name }}"
+          echo "🆔 工作流ID: ${{ github.run_id }}"
+          echo "🏃 运行编号: ${{ github.run_number }}"
+          echo "👤 执行者: ${{ github.actor }}"
+          echo "📋 仓库: ${{ github.repository }}"
+          echo ""
+
+          # 详细的事件信息
+          echo "📊 事件详情:"
+          echo "  事件名称: ${{ github.event_name }}"
+
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "  ✅ Schedule触发器工作正常!"
+            echo "  📅 上次执行: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "  ⚠️ 这是手动触发 - Schedule可能不工作"
+            echo "  🎯 手动输入: ${{ github.event.inputs.test_reason }}"
+          else
+            echo "  ❓ 未知触发类型: ${{ github.event_name }}"
+          fi
+
+          echo ""
+          echo "🌐 网络测试:"
+          curl -s --connect-timeout 10 --max-time 30 \
+            -w "状态码: %{http_code}, 响应时间: %{time_total}s\n" \
+            -o /dev/null \
+            "https://geo-backend-vp34.onrender.com/api/health" || echo "网络连接失败"
+
+          echo ""
+          echo "========================================"
+
+      - name: 📝 创建执行日志
+        run: |
+          LOG_FILE="schedule-test-$(date +%Y%m%d).log"
+          echo "$(date '+%Y-%m-%d %H:%M:%S UTC') - 触发: ${{ github.event_name }} - ID: ${{ github.run_id }}" >> "$LOG_FILE"
+          echo "📝 日志已保存到: $LOG_FILE"
+          cat "$LOG_FILE"

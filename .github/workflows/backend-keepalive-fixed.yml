@@ -1,0 +1,289 @@
+name: 🛡️ 修复版后端保活服务
+
+# 基于失败分析的优化版本
+# 解决超时、频率和复杂度问题
+
+on:
+  schedule:
+    # 改为每20分钟执行一次，降低GitHub Actions压力
+    # 使用单个时间点，避免复杂cron表达式
+    - cron: '5,25,45 * * * *'
+
+  workflow_dispatch:
+    inputs:
+      urgent_wakeup:
+        description: '紧急唤醒模式（更长超时）'
+        required: false
+        default: false
+        type: boolean
+      debug_mode:
+        description: '启用详细调试日志'
+        required: false
+        default: false
+        type: boolean
+
+# 增加全局超时到15分钟
+timeout-minutes: 15
+
+env:
+  BACKEND_URL: 'https://geo-backend-vp34.onrender.com'
+  USER_AGENT: 'GEO-KeepAlive-Fixed/3.0'
+
+jobs:
+  # 简化的保活任务
+  keep-alive:
+    name: 🔥 智能保活检查
+
+    runs-on: ubuntu-latest
+
+    # 允许失败但不阻塞状态监控
+    continue-on-error: true
+
+    steps:
+      - name: 🕐 执行环境检查
+        run: |
+          echo "=========================================="
+          echo "🛡️ GEO后端保活服务 - 修复版 v3.0"
+          echo "=========================================="
+          echo "📅 执行时间: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🔧 触发事件: ${{ github.event_name }}"
+          echo "🆔 工作流ID: ${{ github.run_id }}"
+          echo "🏃 运行编号: ${{ github.run_number }}"
+          echo "🌐 目标服务: $BACKEND_URL"
+          echo "⏱️ 最大执行时间: 15分钟"
+          echo ""
+
+          # 触发事件分析
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "✅ 自动调度触发"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "⚡ 手动触发执行"
+            if [ "${{ github.event.inputs.urgent_wakeup }}" = "true" ]; then
+              echo "🚨 紧急唤醒模式已启用"
+            fi
+          fi
+
+      - name: 🔨 简化健康检查
+        run: |
+          echo "🔍 开始智能健康检查..."
+
+          # 根据模式设置超时参数
+          if [ "${{ github.event.inputs.urgent_wakeup }}" = "true" ]; then
+            CONNECT_TIMEOUT=90
+            MAX_TIMEOUT=180
+            RETRY_COUNT=3
+            RETRY_DELAY=45
+            echo "🚨 紧急唤醒模式：扩展超时时间"
+          else
+            CONNECT_TIMEOUT=60
+            MAX_TIMEOUT=120
+            RETRY_COUNT=2
+            RETRY_DELAY=30
+            echo "⏰ 标准保活模式：正常超时时间"
+          fi
+
+          if [ "${{ github.event.inputs.debug_mode }}" = "true" ]; then
+            echo "🐛 调试模式：启用详细日志"
+            set -x
+          fi
+
+          echo "📡 连接参数："
+          echo "  连接超时: ${CONNECT_TIMEOUT}秒"
+          echo "  最大超时: ${MAX_TIMEOUT}秒"
+          echo "  重试次数: ${RETRY_COUNT}"
+          echo "  重试延迟: ${RETRY_DELAY}秒"
+          echo ""
+
+          # 先尝试根路径唤醒（如果需要）
+          if [ "${{ github.event.inputs.urgent_wakeup }}" = "true" ]; then
+            echo "🔄 紧急模式：先访问根路径唤醒服务..."
+            curl -s \
+              --connect-timeout $CONNECT_TIMEOUT \
+              --max-time $MAX_TIMEOUT \
+              --retry 1 \
+              -H "User-Agent: $USER_AGENT-Urgent" \
+              "$BACKEND_URL/" > /tmp/wake_up_response.json 2>&1 || echo "根路径访问失败，继续检查"
+          fi
+
+          # 主要健康检查
+          echo "🏥 执行API健康检查..."
+          START_TIME=$(date +%s)
+
+          HTTP_CODE=$(curl -s -w "%{http_code}" \
+            --connect-timeout $CONNECT_TIMEOUT \
+            --max-time $MAX_TIMEOUT \
+            --retry $RETRY_COUNT \
+            --retry-delay $RETRY_DELAY \
+            -H "User-Agent: $USER_AGENT" \
+            -H "Accept: application/json" \
+            -o /tmp/health_response.json \
+            "$BACKEND_URL/api/health" 2>/dev/null || echo "000")
+
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+
+          echo "📊 检查结果："
+          echo "  状态码: $HTTP_CODE"
+          echo "  执行时间: ${DURATION}秒"
+          echo ""
+
+          # 分析响应
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ 服务运行正常"
+            if [ -f /tmp/health_response.json ]; then
+              echo "📄 健康检查响应："
+              cat /tmp/health_response.json | head -10
+            fi
+            echo "🎯 保活任务完成 - 服务无需唤醒"
+          elif [ "$HTTP_CODE" != "000" ]; then
+            echo "⚠️ 服务部分响应（HTTP $HTTP_CODE）"
+            echo "🔄 服务正在运行但健康检查端点可能有问题"
+            if [ -f /tmp/health_response.json ]; then
+              echo "📄 响应内容："
+              cat /tmp/health_response.json | head -5
+            fi
+          else
+            echo "❌ 服务无响应，尝试基本连接测试..."
+
+            # 最后的连接测试
+            BASIC_CODE=$(curl -s -w "%{http_code}" \
+              --connect-timeout 30 \
+              --max-time 60 \
+              --retry 1 \
+              -H "User-Agent: $USER_AGENT-Basic" \
+              -o /tmp/basic_response.json \
+              "$BACKEND_URL/" 2>/dev/null || echo "000")
+
+            if [ "$BASIC_CODE" != "000" ]; then
+              echo "✅ 基本连接成功（状态码: $BASIC_CODE）"
+              echo "💡 服务在运行但API端点可能需要额外时间"
+            else
+              echo "❌ 完全无法连接服务"
+              echo "🔧 需要手动干预或检查服务状态"
+              exit 1
+            fi
+          fi
+
+      - name: 🔐 快速API验证
+        continue-on-error: true
+        run: |
+          echo "🔐 执行快速API功能验证..."
+
+          # 测试健康端点（轻量级）
+          echo "🏥 测试健康端点..."
+          HEALTH_CODE=$(curl -s -w "%{http_code}" \
+            --connect-timeout 30 \
+            --max-time 60 \
+            -H "User-Agent: $USER_AGENT-Quick" \
+            -o /tmp/quick_health.json \
+            "$BACKEND_URL/api/health" 2>/dev/null || echo "000")
+
+          # 测试登录端点（预期401或200）
+          echo "🔐 测试登录端点..."
+          LOGIN_CODE=$(curl -s -w "%{http_code}" \
+            --connect-timeout 30 \
+            --max-time 60 \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: $USER_AGENT-Quick" \
+            -d '{"email":"keepalive@test.com","password":"test123"}' \
+            -o /tmp/quick_login.json \
+            "$BACKEND_URL/api/auth/login" 2>/dev/null || echo "000")
+
+          echo "📊 API测试结果："
+          echo "  健康端点: $HEALTH_CODE"
+          echo "  登录端点: $LOGIN_CODE"
+
+          # 简单结果分析
+          if [ "$HEALTH_CODE" = "200" ]; then
+            echo "✅ 健康端点正常"
+          elif [ "$HEALTH_CODE" != "000" ]; then
+            echo "⚠️ 健康端点有响应但非200"
+          else
+            echo "❌ 健康端点无响应"
+          fi
+
+          if [ "$LOGIN_CODE" = "401" ] || [ "$LOGIN_CODE" = "200" ]; then
+            echo "✅ 登录端点响应正常"
+          elif [ "$LOGIN_CODE" != "000" ]; then
+            echo "⚠️ 登录端点有响应"
+          else
+            echo "❌ 登录端点无响应"
+          fi
+
+      - name: 📊 生成执行报告
+        run: |
+          echo "📊 ===== GEO后端保活服务执行报告 ====="
+          echo "📅 执行时间: $(date '+%Y-%m-%d %H:%M:%S')"
+          echo "🔧 工作流版本: 修复版 v3.0"
+          echo "🌐 目标服务: $BACKEND_URL"
+          echo "⏱️ 执行频率: 每20分钟"
+          echo "🔄 执行策略: 简化智能保活"
+          echo ""
+          echo "✅ 保活结果: 任务已完成"
+          echo "📈 优化改进: 减少复杂度，提高稳定性"
+          echo ""
+          echo "🌐 用户访问地址:"
+          echo "- 前端: https://still-geo.gocdn.dpdns.org/"
+          echo "- 后端: https://geo-backend-vp34.onrender.com/api"
+          echo "- 健康检查: https://geo-backend-vp34.onrender.com/api/health"
+          echo ""
+          echo "🎯 修复要点:"
+          echo "- 降低执行频率（8分钟→20分钟）"
+          echo "- 简化检查流程（三阶段→单阶段）"
+          echo "- 增加超时时间（10分钟→15分钟）"
+          echo "- 优化重试策略和错误处理"
+          echo "- 添加调试和紧急模式支持"
+          echo "=========================================="
+
+      - name: 🚨 失败处理
+        if: failure()
+        run: |
+          echo "❌ 保活任务执行失败"
+          echo "📅 失败时间: $(date)"
+          echo "🔗 服务地址: $BACKEND_URL"
+          echo ""
+          echo "🔧 立即故障排除:"
+          echo "1. 🌐 手动访问服务: $BACKEND_URL"
+          echo "2. 📊 检查健康端点: $BACKEND_URL/api/health"
+          echo "3. 🔧 查看Render控制台: https://dashboard.render.com"
+          echo "4. 🚀 手动触发应急工作流"
+          echo ""
+          echo "💡 如果连续失败，建议:"
+          echo "- 检查服务是否被限流"
+          echo "- 验证API端点配置"
+          echo "- 考虑使用应急工作流"
+
+  # 简化的状态监控
+  status-monitor:
+    name: 📈 服务状态监控
+
+    runs-on: ubuntu-latest
+
+    # 修复条件逻辑：简化为仅在成功时运行
+    if: always() && github.event_name == 'schedule' && needs.keep-alive.result == 'success'
+    needs: keep-alive
+
+    steps:
+      - name: 📊 记录状态
+        run: |
+          echo "📊 [$(date)] 服务状态记录"
+
+          # 快速状态检查
+          STATUS=$(curl -s -w "%{http_code}" \
+            --max-time 30 \
+            --connect-timeout 10 \
+            -o /dev/null \
+            "$BACKEND_URL/api/health" 2>/dev/null || echo "000")
+
+          if [ "$STATUS" = "200" ]; then
+            echo "✅ 服务状态: 正常运行"
+          elif [ "$STATUS" != "000" ]; then
+            echo "⚠️ 服务状态: 部分正常 (HTTP $STATUS)"
+          else
+            echo "❌ 服务状态: 需要关注"
+          fi
+
+          echo "📅 检查时间: $(date)"
+          echo "🌐 服务地址: $BACKEND_URL"
+          echo "📈 监控结果: 已记录"

@@ -21,25 +21,14 @@ async function startAPIServer() {
     logger.info(`API Server is running on port ${port}`);
   });
 
-  // 健康检查端点增强
-  app.get('/api/health/queue', async (req, res) => {
-    try {
-      const { getQueueHealth } = require('./queue-fixed');
-      const health = await getQueueHealth();
-      res.json({
-        status: 'OK',
-        service: 'geo-backend-api',
-        queue: health,
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      res.status(500).json({
-        status: 'ERROR',
-        service: 'geo-backend-api',
-        error: error.message,
-        timestamp: new Date().toISOString()
-      });
-    }
+  // 简单的健康检查端点（避免与routes/health.js冲突）
+  app.get('/api/health/simple', (req, res) => {
+    res.json({
+      status: 'OK',
+      service: 'geo-backend-api',
+      mode: serviceMode,
+      timestamp: new Date().toISOString()
+    });
   });
 
   // Graceful shutdown

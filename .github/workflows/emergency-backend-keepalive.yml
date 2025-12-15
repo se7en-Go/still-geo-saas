@@ -1,0 +1,108 @@
+name: 🆘 应急保活服务
+
+# 应急备用工作流 - 极简版本，确保基本功能
+# 仅在主工作流失败时手动触发
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: '触发原因'
+        required: false
+        default: 'emergency_check'
+        type: string
+
+env:
+  BACKEND_URL: 'https://geo-backend-vp34.onrender.com'
+  TIMEOUT: 90
+
+jobs:
+  emergency-check:
+    name: 🆘 应急服务检查
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🚨 开始应急检查
+        run: |
+          echo "🆘 应急保活服务启动"
+          echo "⏰ 时间: $(date)"
+          echo "🎯 原因: ${{ github.event.inputs.reason }}"
+          echo "📍 目标: $BACKEND_URL"
+
+      - name: 🔍 简单健康检查
+        run: |
+          echo "🔍 执行基础健康检查..."
+
+          # 长时间等待以适应Render冷启动
+          HTTP_CODE=$(curl -s -w "%{http_code}" \
+            --connect-timeout 45 \
+            --max-time $TIMEOUT \
+            --retry 3 \
+            --retry-delay 20 \
+            -H "User-Agent: GEO-Emergency/1.0" \
+            -o /tmp/emergency_response.json \
+            "$BACKEND_URL/api/health")
+
+          echo "📊 状态码: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ 服务在线"
+            echo "📄 响应:"
+            cat /tmp/emergency_response.json 2>/dev/null || echo "响应为空"
+          else
+            echo "⚠️ 服务响应异常，尝试其他方法..."
+
+            # 尝试根路径
+            echo "🔄 尝试根路径..."
+            curl -I --connect-timeout 30 --max-time 60 "$BACKEND_URL/" || echo "根路径也失败"
+
+            # 尝试API路径
+            echo "🔄 尝试API路径..."
+            curl -I --connect-timeout 30 --max-time 60 "$BACKEND_URL/api" || echo "API路径失败"
+          fi
+
+      - name: 🔐 基础登录测试
+        continue-on-error: true
+        run: |
+          echo "🔐 测试登录端点..."
+
+          HTTP_CODE=$(curl -s -w "%{http_code}" \
+            --connect-timeout 30 \
+            --max-time 60 \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: GEO-Emergency/1.0" \
+            -d '{"email": "emergency@test.com", "password": "test123"}' \
+            -o /tmp/emergency_login.json \
+            "$BACKEND_URL/api/auth/login")
+
+          echo "📊 登录状态码: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" = "401" ]; then
+            echo "✅ 登录端点响应正常（认证失败是预期的）"
+          elif [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ 登录测试成功"
+          else
+            echo "⚠️ 登录端点可能有问题"
+          fi
+
+      - name: 📋 应急报告
+        run: |
+          echo "📋 ===== 应急保活报告 ====="
+          echo "📅 执行时间: $(date)"
+          echo "🎯 触发原因: ${{ github.event.inputs.reason }}"
+          echo "🌐 服务地址: $BACKEND_URL"
+          echo "🔗 用户前端: https://still-geo.gocdn.dpdns.org/"
+          echo "🔧 Render控制台: https://dashboard.render.com"
+          echo "=============================="
+
+      - name: 📧 手动通知提示
+        run: |
+          echo "🚨 如果此应急工作流也失败，请："
+          echo "1. 📊 检查Render控制台服务状态"
+          echo "2. 🔧 查看服务日志中的错误"
+          echo "3. 🌐 手动访问后端URL进行测试"
+          echo "4. 📱 联系技术支持团队"
+          echo ""
+          echo "💡 手动测试命令:"
+          echo "curl -I $BACKEND_URL/api/health"

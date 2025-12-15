@@ -1,0 +1,287 @@
+name: Production Backend Keepalive Service
+
+# Trigger: Every 14 minutes (before 15-minute Render limit)
+on:
+  schedule:
+    - cron: '*/14 * * * *'
+
+  workflow_dispatch:
+    inputs:
+      strategy:
+        description: 'Execution Strategy'
+        required: false
+        default: 'standard'
+        type: choice
+        options:
+        - standard
+        - aggressive
+        - minimal
+
+env:
+  BACKEND_URL: 'https://geo-backend-vp34.onrender.com'
+  HEALTH_ENDPOINT: '/api/health'
+  LOGIN_ENDPOINT: '/api/auth/login'
+  USER_AGENT: 'GEO-Production-KeepAlive/2.0'
+
+jobs:
+  # Main keepalive job
+  backend-keepalive:
+    name: Backend Keepalive Check
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        strategy: [${{ github.event.inputs.strategy || 'standard' }}]
+      fail-fast: false
+
+    steps:
+      - name: Initialize Keepalive Task
+        run: |
+          echo "Target: $BACKEND_URL"
+          echo "Start Time: $(date)"
+          echo "Strategy: ${{ matrix.strategy }}"
+          echo "Phase: Initialization"
+
+      - name: Phase 1 - Health Check
+        id: health-check
+        continue-on-error: true
+        run: |
+          echo "Executing Phase 1: Health Check..."
+
+          # Strategy-based timeout settings
+          case "${{ matrix.strategy }}" in
+            "aggressive")
+              CONNECT_TIMEOUT=15
+              MAX_TIME=60
+              ;;
+            "minimal")
+              CONNECT_TIMEOUT=5
+              MAX_TIME=20
+              ;;
+            *)
+              CONNECT_TIMEOUT=10
+              MAX_TIME=30
+              ;;
+          esac
+
+          echo "Timeout Settings: Connect ${CONNECT_TIMEOUT}s, Total ${MAX_TIME}s"
+
+          # Execute health check
+          HTTP_CODE=$(curl -s -w "%{http_code}" \
+            --connect-timeout "$CONNECT_TIMEOUT" \
+            --max-time "$MAX_TIME" \
+            --retry 1 \
+            --retry-delay 5 \
+            -H "User-Agent: $USER_AGENT" \
+            -o /tmp/health_response.json \
+            "$BACKEND_URL$HEALTH_ENDPOINT" || echo "000")
+
+          echo "Health Check Status Code: $HTTP_CODE"
+
+          # Analyze response
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "STATUS=healthy" >> $GITHUB_ENV
+            echo "MESSAGE=Service is running normally" >> $GITHUB_ENV
+            echo "SUCCESS: Service is running"
+            cat /tmp/health_response.json 2>/dev/null || echo "Response is empty"
+          elif [ "$HTTP_CODE" = "401" ]; then
+            echo "STATUS=healthy" >> $GITHUB_ENV
+            echo "MESSAGE=Service is online, authentication required" >> $GITHUB_ENV
+            echo "SUCCESS: Service is online (auth required)"
+          elif [ "$HTTP_CODE" = "404" ]; then
+            echo "STATUS=warning" >> $GITHUB_ENV
+            echo "MESSAGE=Route configuration may have issues" >> $GITHUB_ENV
+            echo "WARNING: Service online but route abnormal"
+          else
+            echo "STATUS=unhealthy" >> $GITHUB_ENV
+            echo "MESSAGE=Service needs wakeup" >> $GITHUB_ENV
+            echo "FAILED: Service unreachable"
+          fi
+
+      - name: Phase 2 - Smart Wakeup
+        if: steps.health-check.outputs.STATUS == 'unhealthy'
+        run: |
+          STRATEGY="${{ matrix.strategy }}"
+
+          echo "Executing Phase 2: Smart Wakeup..."
+
+          # Force wakeup access
+          echo "Accessing root path to wake up service..."
+          curl -v --connect-timeout 15 --max-time 60 \
+            -H "User-Agent: $USER_AGENT-Wake" \
+            "$BACKEND_URL/" || echo "Root path access failed"
+
+          # Wait for service startup
+          if [ "$STRATEGY" = "aggressive" ]; then
+            echo "Aggressive strategy: waiting 45 seconds..."
+            sleep 45
+          elif [ "$STRATEGY" = "minimal" ]; then
+            echo "Minimal strategy: waiting 15 seconds..."
+            sleep 15
+          else
+            echo "Standard strategy: waiting 30 seconds..."
+            sleep 30
+          fi
+
+          echo "WAKEUP_ATTEMPTED=true" >> $GITHUB_ENV
+          echo "WAKEUP_TIME=$(date)" >> $GITHUB_ENV
+
+      - name: Phase 3 - Verify Wakeup
+        if: steps.health-check.outputs.STATUS == 'unhealthy'
+        continue-on-error: true
+        run: |
+          echo "Executing Phase 3: Verify Wakeup..."
+
+          # Health check again
+          HTTP_CODE=$(curl -s -w "%{http_code}" \
+            --connect-timeout 10 \
+            --max-time 45 \
+            --retry 2 \
+            --retry-delay 10 \
+            -H "User-Agent: $USER_AGENT" \
+            -o /tmp/wakeup_response.json \
+            "$BACKEND_URL$HEALTH_ENDPOINT" || echo "000")
+
+          echo "Post-wakeup Status Code: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "FINAL_STATUS=success" >> $GITHUB_ENV
+            echo "FINAL_MESSAGE=Service wakeup successful" >> $GITHUB_ENV
+            echo "SUCCESS: Wakeup successful!"
+          elif [ "$HTTP_CODE" = "401" ]; then
+            echo "FINAL_STATUS=success" >> $GITHUB_ENV
+            echo "FINAL_MESSAGE=Service wakeup successful, auth required" >> $GITHUB_ENV
+            echo "SUCCESS: Wakeup successful (service online)"
+          else
+            echo "FINAL_STATUS=failed" >> $GITHUB_ENV
+            echo "FINAL_MESSAGE=Wakeup failed, manual intervention needed" >> $GITHUB_ENV
+            echo "FAILED: Wakeup failed"
+          fi
+
+      - name: Phase 4 - Function Verification
+        if: env.FINAL_STATUS == 'success' || env.STATUS == 'healthy'
+        continue-on-error: true
+        run: |
+          echo "Executing Phase 4: Function Verification..."
+
+          # Test login endpoint
+          HTTP_CODE=$(curl -s -w "%{http_code}" \
+            --connect-timeout 10 \
+            --max-time 30 \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: $USER_AGENT-Test" \
+            -d '{"email": "healthcheck@example.com", "password": "test123"}' \
+            -o /tmp/login_response.json \
+            "$BACKEND_URL$LOGIN_ENDPOINT" || echo "000")
+
+          echo "Login Test Status Code: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" = "401" ]; then
+            echo "LOGIN_STATUS=normal" >> $GITHUB_ENV
+            echo "SUCCESS: Login endpoint normal (auth failure expected)"
+          elif [ "$HTTP_CODE" = "200" ]; then
+            echo "LOGIN_STATUS=perfect" >> $GITHUB_ENV
+            echo "SUCCESS: Login function fully normal"
+          else
+            echo "LOGIN_STATUS=warning" >> $GITHUB_ENV
+            echo "WARNING: Login endpoint may have issues"
+          fi
+
+      - name: Phase 5 - Status Report
+        if: always()
+        run: |
+          echo "========================================="
+          echo "GEO Backend Keepalive Service Report"
+          echo "========================================="
+          echo "Execution Time: $(date)"
+          echo "Target Service: $BACKEND_URL"
+          echo "Strategy: ${{ matrix.strategy }}"
+          echo ""
+
+          # Initial status
+          if [ "$STATUS" = "healthy" ]; then
+            echo "Initial Status: Service running normally"
+            echo "Details: $MESSAGE"
+          else
+            echo "Initial Status: Service needed wakeup"
+            echo "Details: $MESSAGE"
+          fi
+
+          # Wakeup result
+          if [ "$FINAL_STATUS" = "success" ]; then
+            echo "Wakeup Result: Successfully woke up service"
+            echo "Details: $FINAL_MESSAGE"
+          elif [ "$FINAL_STATUS" = "failed" ]; then
+            echo "Wakeup Result: Wakeup failed"
+            echo "Details: $FINAL_MESSAGE"
+          else
+            echo "Wakeup Result: No wakeup needed"
+          fi
+
+          # Function verification
+          if [ "$LOGIN_STATUS" = "normal" ]; then
+            echo "Function Verification: Login endpoint normal"
+          elif [ "$LOGIN_STATUS" = "perfect" ]; then
+            echo "Function Verification: All functions perfect"
+          elif [ "$LOGIN_STATUS" = "warning" ]; then
+            echo "Function Verification: Some functions abnormal"
+          else
+            echo "Function Verification: Not executed"
+          fi
+
+          echo ""
+          echo "Overall Assessment:"
+          if [ "$STATUS" = "healthy" ] || [ "$FINAL_STATUS" = "success" ]; then
+            echo "Status: SUCCESS - Backend service is in good condition"
+          else
+            echo "Status: PARTIAL SUCCESS - Needs attention"
+          fi
+
+          echo ""
+          echo "User Access:"
+          echo "- Frontend: https://still-geo.gocdn.dpdns.org/"
+          echo "- Backend: $BACKEND_URL"
+          echo "========================================="
+
+  # Emergency check job
+  emergency-check:
+    name: Emergency Status Check
+    runs-on: ubuntu-latest
+    needs: backend-keepalive
+    if: always() && needs.backend-keepalive.result == 'failure'
+
+    steps:
+      - name: Emergency Diagnosis
+        run: |
+          echo "========================================="
+          echo "Emergency Status Check"
+          echo "========================================="
+          echo "Check Time: $(date)"
+          echo "Target: $BACKEND_URL"
+          echo ""
+
+          echo "Executing emergency connectivity check..."
+
+          # Quick connectivity check
+          echo "Method 1: HTTP Quick Check"
+          HTTP_CODE=$(curl -s -w "%{http_code}" \
+            --connect-timeout 5 \
+            --max-time 15 \
+            -I \
+            -o /dev/null \
+            "https://geo-backend-vp34.onrender.com/" || echo "000")
+
+          if [ "$HTTP_CODE" != "000" ]; then
+            echo "SUCCESS: HTTP Response $HTTP_CODE - Basic connection normal"
+          else
+            echo "FAILED: HTTP completely unresponsive"
+          fi
+
+          echo ""
+          echo "Recommended Actions:"
+          echo "1. Visit https://dashboard.render.com check service status"
+          echo "2. Manually access backend URL for testing"
+          echo "3. Check service logs"
+          echo "4. Consider restarting service or contact support"
+          echo "========================================="

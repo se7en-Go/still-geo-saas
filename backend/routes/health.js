@@ -1,9 +1,25 @@
 const express = require('express');
 const { auth } = require('../middleware/auth');
-const { contentQueue, queueEvents } = require('../queue-fixed');
 const { config } = require('../config');
 const logger = require('../logger');
 const db = require('../db');
+
+// 临时修复：延迟加载队列以避免启动问题
+let contentQueue = null;
+let queueEvents = null;
+
+// 安全的队列初始化函数
+function initializeQueue() {
+  try {
+    const { contentQueue: queue, queueEvents: events } = require('../queue-fixed');
+    contentQueue = queue;
+    queueEvents = events;
+    return true;
+  } catch (err) {
+    console.error('Failed to initialize queue:', err.message);
+    return false;
+  }
+}
 
 const router = express.Router();
 
@@ -40,8 +56,12 @@ router.get('/system', async (req, res) => {
       health.status = 'degraded';
     }
 
-    // 检查Redis和队列连接
+    // 检查Redis和队列连接 - 安全方式
     try {
+      if (!contentQueue) {
+        initializeQueue(); // 尝试初始化队列
+      }
+
       if (contentQueue) {
         const counts = await contentQueue.getJobCounts();
         health.services.queue = 'healthy';
@@ -54,8 +74,10 @@ router.get('/system', async (req, res) => {
       } else {
         health.services.queue = 'unhealthy';
         health.status = 'degraded';
+        health.services.redis = 'unhealthy';
       }
     } catch (err) {
+      console.warn('Queue check failed:', err.message);
       health.services.redis = 'unhealthy';
       health.services.queue = 'unhealthy';
       health.status = 'degraded';

@@ -1,0 +1,149 @@
+name: 🛡️ 优化版后端保活服务
+
+# 简化但强大的保活服务 - 专注于schedule触发器修复
+on:
+  schedule:
+    # 使用更稳定的cron表达式 - 每8分钟执行
+    # 避免 */10 的潜在问题，使用具体的分钟值
+    - cron: '2,10,18,26,34,42,50,58 * * * *'
+
+  workflow_dispatch:
+    inputs:
+      debug_mode:
+        description: '调试模式'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  BACKEND_URL: 'https://geo-backend-vp34.onrender.com'
+  HEALTH_ENDPOINT: '/api/health'
+  TIMEOUT: 60
+  USER_AGENT: 'GEO-KeepAlive-Optimized/1.0'
+
+jobs:
+  keepalive:
+    name: 🔥 后端保活检查
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🕐 记录执行信息
+        run: |
+          echo "==== GEO后端保活服务 ===="
+          echo "⏰ 执行时间: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🔧 触发事件: ${{ github.event_name }}"
+          echo "🆔 工作流ID: ${{ github.run_id }}"
+          echo "🌐 目标服务: $BACKEND_URL"
+          echo "🐛 调试模式: ${{ github.event.inputs.debug_mode || 'false' }}"
+          echo ""
+
+          # 关键：记录触发事件类型
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "✅ 自动调度触发 - 正常运行"
+          else
+            echo "⚠️ 手动触发 - 调度器可能有问题"
+          fi
+
+      - name: 🏥 执行健康检查
+        id: health_check
+        run: |
+          echo "🔍 开始后端服务健康检查..."
+
+          # 多重检查策略
+          SUCCESS=false
+          RESPONSE_CODE="000"
+
+          # 检查1: API健康端点
+          echo "📡 检查API健康端点..."
+          HTTP_CODE=$(curl -s -w "%{http_code}" \
+            --connect-timeout 30 \
+            --max-time 60 \
+            --retry 2 \
+            --retry-delay 10 \
+            -H "User-Agent: $USER_AGENT" \
+            -o /tmp/health_response.json \
+            "$BACKEND_URL$HEALTH_ENDPOINT" 2>/dev/null || echo "000")
+
+          echo "📊 API健康检查状态码: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ]; then
+            SUCCESS=true
+            RESPONSE_CODE="$HTTP_CODE"
+            echo "✅ API健康检查成功"
+            cat /tmp/health_response.json 2>/dev/null | head -5 || echo "响应为空"
+          else
+            echo "❌ API健康检查失败，尝试根路径..."
+
+            # 检查2: 根路径
+            HTTP_CODE=$(curl -s -w "%{http_code}" \
+              --connect-timeout 20 \
+              --max-time 40 \
+              -H "User-Agent: $USER_AGENT" \
+              -o /tmp/root_response.json \
+              "$BACKEND_URL/" 2>/dev/null || echo "000")
+
+            echo "📊 根路径检查状态码: $HTTP_CODE"
+
+            if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "302" ]; then
+              SUCCESS=true
+              RESPONSE_CODE="$HTTP_CODE"
+              echo "✅ 根路径检查成功"
+            else
+              echo "❌ 所有检查都失败"
+            fi
+          fi
+
+          # 保存结果
+          echo "success=$SUCCESS" >> $GITHUB_OUTPUT
+          echo "response_code=$RESPONSE_CODE" >> $GITHUB_OUTPUT
+
+      - name: 📊 生成执行报告
+        run: |
+          echo ""
+          echo "📋 ===== 执行报告 ====="
+          echo "🎯 触发事件: ${{ github.event_name }}"
+          echo "✅ 检查成功: ${{ steps.health_check.outputs.success }}"
+          echo "📊 响应状态码: ${{ steps.health_check.outputs.response_code }}"
+          echo "⏰ 执行时间: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🆔 工作流运行: ${{ github.run_id }}"
+          echo ""
+
+          # 状态评估
+          if [ "${{ steps.health_check.outputs.success }}" = "true" ]; then
+            echo "🎉 服务状态: 在线且响应正常"
+            echo "💡 用户可以正常访问服务"
+          else
+            echo "⚠️ 服务状态: 可能离线或响应异常"
+            echo "🔧 建议检查Render控制台和服务日志"
+          fi
+
+          echo ""
+          echo "🔗 相关链接:"
+          echo "  🏠 用户前端: https://still-geo.gocdn.dpdns.org/"
+          echo "  🔧 后端API: $BACKEND_URL"
+          echo "  📊 Render控制台: https://dashboard.render.com"
+          echo "  📈 GitHub Actions: https://github.com/${{ github.repository }}/actions"
+          echo ""
+          echo "========================================"
+
+      - name: 📝 记录执行历史
+        if: always()
+        run: |
+          # 创建执行历史记录
+          mkdir -p ./logs
+          HISTORY_FILE="./logs/keepalive-history-$(date +%Y%m).log"
+
+          echo "$(date '+%Y-%m-%d %H:%M:%S UTC'),${{ github.event_name }},${{ steps.health_check.outputs.success }},${{ steps.health_check.outputs.response_code }},${{ github.run_id }}" >> "$HISTORY_FILE"
+
+          echo "📝 执行历史已记录到: $HISTORY_FILE"
+
+          # 显示最近5次执行
+          echo ""
+          echo "📈 最近5次执行记录:"
+          tail -5 "$HISTORY_FILE" | while IFS=',' read -r time event success code run_id; do
+            status_icon="❌"
+            if [ "$success" = "true" ]; then
+              status_icon="✅"
+            fi
+            echo "  $time | $event | $status_icon | 状态码: $code"
+          done
