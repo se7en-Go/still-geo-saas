@@ -77,7 +77,8 @@ function createApp() {
     { path: '/api/rules', handler: ruleRoutes, name: 'rules' },
     { path: '/api/content', handler: contentRoutes, name: 'content' },
     { path: '/api/knowledge-sets', handler: knowledgeSetRoutes, name: 'knowledgeSets' },
-    { path: '/api/geo', handler: geoRoutes, name: 'geo' }
+    { path: '/api/geo', handler: geoRoutes, name: 'geo' },
+    { path: '/api/health-detailed', handler: healthRoutes, name: 'health-detailed' }
   ];
 
   routes.forEach(route => {
@@ -95,9 +96,6 @@ function createApp() {
       });
     }
   });
-
-  // 复杂的健康检查端点 - 可选功能，用于详细监控
-  app.use('/api/health-detailed', healthRoutes);
 
   app.use(errorHandler);
 
