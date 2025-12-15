@@ -14,6 +14,7 @@ const contentRoutes = require('./routes/content');
 const knowledgeSetRoutes = require('./routes/knowledgeSets');
 const geoRoutes = require('./routes/geo');
 const { router: healthRoutes } = require('./routes/health');
+const queueStatusRoutes = require('./routes/queue-status');
 const errorHandler = require('./middleware/errorHandler');
 
 function createApp() {
@@ -78,7 +79,8 @@ function createApp() {
     { path: '/api/content', handler: contentRoutes, name: 'content' },
     { path: '/api/knowledge-sets', handler: knowledgeSetRoutes, name: 'knowledgeSets' },
     { path: '/api/geo', handler: geoRoutes, name: 'geo' },
-    { path: '/api/health-detailed', handler: healthRoutes, name: 'health-detailed' }
+    { path: '/api/health-detailed', handler: healthRoutes, name: 'health-detailed' },
+    { path: '/api/queue', handler: queueStatusRoutes, name: 'queue-status' }
   ];
 
   routes.forEach(route => {

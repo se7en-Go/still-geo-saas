@@ -1813,16 +1813,34 @@ worker.on('closing', () => {
   logger.info('Worker is shutting down');
 });
 
-// 验证Worker启动状态
+// 验证Worker启动状态 - 使用更安全的方式
 setTimeout(async () => {
   try {
-    const waiting = await worker.getWaiting();
-    const active = await worker.getActive();
-    logger.info('Worker status verified', {
-      waitingJobs: waiting.length,
-      activeJobs: active.length,
-      workerId: worker.id,
-    });
+    // 检查Worker是否就绪
+    if (worker && worker.getState) {
+      const state = worker.getState();
+      logger.info('Worker status verified', {
+        state,
+        workerId: worker.id,
+        connectionType: connection ? 'redis' : 'memory'
+      });
+    } else {
+      logger.warn('Worker state verification skipped - getState not available');
+    }
+
+    // 尝试获取任务统计（使用try-catch保护）
+    try {
+      const waiting = await worker.getWaiting();
+      const active = await worker.getActive();
+      logger.info('Job statistics retrieved', {
+        waitingJobs: waiting.length,
+        activeJobs: active.length,
+      });
+    } catch (jobErr) {
+      logger.warn('Job statistics retrieval failed (non-critical)', {
+        error: jobErr.message
+      });
+    }
   } catch (err) {
     logger.error('Worker status verification failed', { error: err.message });
   }
