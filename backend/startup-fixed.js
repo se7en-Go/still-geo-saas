@@ -4,7 +4,7 @@ const logger = require('./logger');
 const { createApp } = require('./app');
 
 // 根据环境变量决定启动模式
-const serviceMode = process.env.SERVICE_MODE || (process.env.NODE_ENV === 'production' ? 'api' : 'full');
+const serviceMode = process.env.SERVICE_MODE || 'full'; // 修复：生产环境也需要Worker
 
 async function startAPIServer() {
   try {
@@ -103,16 +103,21 @@ async function startWorker() {
 }
 
 async function startFullStack() {
-  // 开发模式同时启动API和Worker
+  // 同时启动API和Worker（生产环境也需要）
   logger.info('Starting in full stack mode (API + Worker)');
 
   await startAPIServer();
 
-  // 延迟启动Worker避免端口冲突
+  // 延迟启动Worker避免资源竞争
   setTimeout(() => {
-    require('./worker');
-    logger.info('Worker started in full stack mode');
-  }, 2000);
+    logger.info('Initializing Worker process...');
+    try {
+      require('./worker');
+      logger.info('Worker started successfully in full stack mode');
+    } catch (error) {
+      logger.error('Failed to start Worker in full stack mode', { error: error.message });
+    }
+  }, 3000); // 增加延迟确保API完全启动
 }
 
 // 启动逻辑
